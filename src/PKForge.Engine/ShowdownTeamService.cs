@@ -17,20 +17,47 @@ public static class ShowdownTeamService
     public static IReadOnlyList<(string Text, ShowdownSet Set)> Split(string paste)
     {
         ArgumentNullException.ThrowIfNull(paste);
-        var lines = paste.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n')
-            .Where(line => !line.TrimStart().StartsWith("===", StringComparison.Ordinal));
-        var text = string.Join('\n', lines);
-        var result = new List<(string, ShowdownSet)>();
-        var start = 0;
-        while (start < text.Length)
+
+        var lines = paste
+            .Replace("\r\n", "\n")
+            .Replace('\r', '\n')
+            .Split('\n');
+
+        var result = new List<(string Text, ShowdownSet Set)>();
+        var setLines = new List<string>();
+
+        void AddSet()
         {
-            var slice = text.AsSpan(start);
-            var set = ShowdownParsing.GetShowdownSet(slice, out var length);
-            if (length <= 0) break;
-            var chunk = slice[..Math.Min(length, slice.Length)].ToString().Trim();
-            start += length;
-            if (set.Species != 0 && chunk.Length > 0) result.Add((chunk, set));
+            if (setLines.Count == 0)
+                return;
+
+            var chunk = string.Join('\n', setLines);
+            var linesForParsing = setLines.ToArray();
+            setLines.Clear();
+
+            ShowdownParsing.TryParseAnyLanguage(linesForParsing, out var set);
+
+            if (set is not null && set.Species != 0)
+                result.Add((chunk, set));
         }
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+
+            if (line.StartsWith("===", StringComparison.Ordinal))
+                continue;
+
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                AddSet();
+                continue;
+            }
+
+            setLines.Add(line);
+        }
+
+        AddSet();
         return result;
     }
 
