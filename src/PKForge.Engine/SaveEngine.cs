@@ -6,6 +6,10 @@ namespace PKForge.Engine;
 /// <summary>Adapts the pinned PKHeX.Core save parser without leaking engine types.</summary>
 public sealed class SaveEngine : IFormatAwareSaveEngine
 {
+    private const string OriginHeartGoldNotReady =
+        "Origin HeartGold foi reconhecido, mas o leitor do layout ampliado " +
+        "ainda não foi implementado. O save original não foi alterado.";
+        
     static SaveEngine() => LegalityRules.Apply();
 
     /// <summary>
@@ -17,6 +21,7 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
     {
         if (format == SaveFormat.Auto) return OpenSession(bytes, displayName);
         var decoded = RetroArchSaveContainer.Decode(bytes.Span);
+        ThrowIfOriginHeartGold(decoded);
         var unbound = SaveParser.IsPokemonUnbound(decoded);
         var gsc = !unbound && SaveParser.IsPokemonGsChronicles(decoded);
         var cfru = !unbound && !gsc && SaveParser.IsPokemonRadicalRed(decoded);
@@ -39,9 +44,16 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
         SaveFormat.GsChronicles => "GS Chronicles",
         _ => "a standard game",
     };
+    private static void ThrowIfOriginHeartGold(ReadOnlySpan<byte> data)
+    {
+        if (OriginHeartGoldDetector.IsOriginHeartGold(data))
+            throw new InvalidDataException(OriginHeartGoldNotReady);
+    }
 
     public SaveSnapshot Open(ReadOnlyMemory<byte> bytes, string? displayName = null)
     {
+        ThrowIfOriginHeartGold(
+            RetroArchSaveContainer.Decode(bytes.Span));
         if (SaveParser.IsPokemonUnbound(RetroArchSaveContainer.Decode(bytes.Span)))
             return OpenUnbound(bytes, displayName).Snapshot;
         if (SaveParser.IsPokemonGsChronicles(RetroArchSaveContainer.Decode(bytes.Span)))
@@ -98,6 +110,7 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
         try
         {
             var decoded = RetroArchSaveContainer.Decode(bytes.Span);
+            if (OriginHeartGoldDetector.IsOriginHeartGold(decoded)) return false;
             if (SaveParser.IsPokemonUnbound(decoded)) return true;
             if (SaveParser.IsPokemonGsChronicles(decoded)) return true;
             if (SaveParser.IsPokemonRadicalRed(decoded)) return true;
@@ -187,6 +200,16 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
     public SaveDescription? TryDescribe(ReadOnlyMemory<byte> bytes, string? displayName = null)
     {
         var raw = RetroArchSaveContainer.Decode(bytes.Span);
+        if (OriginHeartGoldDetector.IsOriginHeartGold(raw))
+        {
+            return new SaveDescription(
+                "Origin HeartGold (não editável ainda)",
+                4,
+                "",
+                "",
+                null);
+        };
+        
         if (!SaveParser.TryGetSaveFile(raw, out var save) || save is null)
             return null;
 
