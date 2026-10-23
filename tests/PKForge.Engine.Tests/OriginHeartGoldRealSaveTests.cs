@@ -341,4 +341,28 @@ public void Rc8_DiagnoseParty()
             $"Checksum={pk.ChecksumValid}");
     }
 }
+
+[Fact]
+public void Rc8_Party_Pikachu_IsReadCorrectly()
+{
+    byte[] data = File.ReadAllBytes(Path.Combine(Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
+    Assert.Equal(1, save!.PartyCount);
+    Assert.Equal(236, save.GetPartyRecord(0).Length);
+
+    var pk = new PK4(save.GetPartyRecord(0).ToArray());
+
+    Assert.Equal(25, pk.Species);
+    Assert.Equal("Pikachu", pk.Nickname);
+    Assert.Equal("AAAAAAA", pk.OriginalTrainerName);
+    Assert.Equal(6, pk.Stat_Level);
+    Assert.Equal(pk.CurrentLevel, pk.Stat_Level);
+    Assert.Equal(39, (int)pk.Move1);
+    Assert.Equal(84, (int)pk.Move2);
+    Assert.Equal(98, (int)pk.Move3);
+    Assert.Equal(86, (int)pk.Move4);
+    Assert.True(pk.ChecksumValid);
+}
 }
