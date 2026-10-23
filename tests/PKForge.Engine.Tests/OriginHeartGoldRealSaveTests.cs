@@ -300,5 +300,45 @@ public void Rc5_Box1_ReadsNewGenSpeciesAndMoves()
     Assert.Equal(583, (int)pk.Move2);
     Assert.True(pk.ChecksumValid);
 }
+[Fact]
+public void Rc8_DiagnoseParty()
+{
+    byte[] data = File.ReadAllBytes(Path.Combine(Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
 
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
+    Assert.NotNull(save);
+
+    _output.WriteLine($"PartyCount={save!.PartyCount}");
+
+    for (int slot = 0; slot < save.PartyCount; slot++)
+    {
+        byte[] record = save.GetPartyRecord(slot).ToArray();
+        byte[] pokeBytes = save.GetPartyPokemonBytes(slot).ToArray();
+        _output.WriteLine(
+            $"Time {slot + 1}: GetPartyRecord={record.Length} bytes, " +
+            $"GetPartyPokemonBytes={pokeBytes.Length} bytes");
+        _output.WriteLine($"Hex: {Convert.ToHexString(record)}");
+
+        var pk = new PK4(record);
+
+        string level;
+        try { level = pk.CurrentLevel.ToString(); }
+        catch (Exception ex) { level = $"erro ({ex.GetType().Name})"; }
+
+        _output.WriteLine(
+            $"Time {slot + 1}: Species={pk.Species}, " +
+            $"Apelido={pk.Nickname}, OT={pk.OriginalTrainerName}, " +
+            $"EXP={pk.EXP}, NivelCalculado={level}, " +
+            $"NivelGuardado={pk.Stat_Level}, " +
+            $"HP={pk.Stat_HPCurrent}/{pk.Stat_HPMax}, " +
+            $"ATK={pk.Stat_ATK}, DEF={pk.Stat_DEF}, SPA={pk.Stat_SPA}, " +
+            $"SPD={pk.Stat_SPD}, SPE={pk.Stat_SPE}, " +
+            $"Nat={pk.Nature}, " +
+            $"IVs={pk.IV_HP}/{pk.IV_ATK}/{pk.IV_DEF}/{pk.IV_SPA}/{pk.IV_SPD}/{pk.IV_SPE}, " +
+            $"Golpes={pk.Move1}/{pk.Move2}/{pk.Move3}/{pk.Move4}, " +
+            $"EVs={pk.EV_HP}/{pk.EV_ATK}/{pk.EV_DEF}/{pk.EV_SPA}/{pk.EV_SPD}/{pk.EV_SPE}, " +
+            $"Checksum={pk.ChecksumValid}");
+    }
+}
 }
