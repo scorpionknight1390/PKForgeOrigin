@@ -4,6 +4,8 @@ using PKForge.Engine;
 using Xunit;
 using PKHeX.Core;
 using Xunit.Abstractions;
+using System.Buffers.Binary;
+using System.Linq;
 
 namespace PKForge.Engine.Tests;
 
@@ -20,6 +22,7 @@ public sealed class OriginHeartGoldRealSaveTests
 [InlineData("Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv")]
 [InlineData("Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5_raw_test.sav")]
 [InlineData("Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv")]
+[InlineData("bolsa_teste.dsv")]
 public void RealOriginSavesHaveValidBlockIntegrity(string fileName)
 {
     string path = Path.Combine(Downloads, fileName);
@@ -347,7 +350,7 @@ public void Rc8_Party_Pikachu_IsReadCorrectly()
 {
     byte[] data = File.ReadAllBytes(Path.Combine(Downloads,
         "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
-
+    
     Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
     Assert.Equal(1, save!.PartyCount);
     Assert.Equal(236, save.GetPartyRecord(0).Length);
@@ -363,6 +366,179 @@ public void Rc8_Party_Pikachu_IsReadCorrectly()
     Assert.Equal(84, (int)pk.Move2);
     Assert.Equal(98, (int)pk.Move3);
     Assert.Equal(86, (int)pk.Move4);
+        Assert.Equal(Nature.Impish, pk.Nature);
+
+    Assert.Equal(22, pk.IV_HP);
+    Assert.Equal(31, pk.IV_ATK);
+    Assert.Equal(31, pk.IV_DEF);
+    Assert.Equal(31, pk.IV_SPA);
+    Assert.Equal(1, pk.IV_SPD);
+    Assert.Equal(12, pk.IV_SPE);
+
+    Assert.Equal(0, pk.EV_HP);
+    Assert.Equal(1, pk.EV_ATK);
+    Assert.Equal(1, pk.EV_DEF);
+    Assert.Equal(0, pk.EV_SPA);
+    Assert.Equal(0, pk.EV_SPD);
+    Assert.Equal(2, pk.EV_SPE);
+
+    Assert.Equal(22, pk.Stat_HPMax);
+    Assert.Equal(14, pk.Stat_ATK);
+    Assert.Equal(13, pk.Stat_DEF);
+    Assert.Equal(12, pk.Stat_SPA);
+    Assert.Equal(11, pk.Stat_SPD);
+    Assert.Equal(18, pk.Stat_SPE);
     Assert.True(pk.ChecksumValid);
+}
+[Fact]
+public void Rc8_DiagnoseTrainer()
+{
+    byte[] data = File.ReadAllBytes(Path.Combine(Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
+    Assert.NotNull(save);
+
+    // Assumindo que GeneralOffset é a posição do bloco geral no arquivo.
+    // O teste confirma ou desmente isso comparando TID/SID com o Pikachu.
+    int g = save!.GeneralOffset;
+    const int T = 0x64; // Trainer1 no HGSS padrão
+    ReadOnlySpan<byte> raw = data;
+
+    string nameHex = Convert.ToHexString(raw.Slice(g + T, 16));
+    ushort tid = BinaryPrimitives.ReadUInt16LittleEndian(raw.Slice(g + T + 0x10, 2));
+    ushort sid = BinaryPrimitives.ReadUInt16LittleEndian(raw.Slice(g + T + 0x12, 2));
+    uint money = BinaryPrimitives.ReadUInt32LittleEndian(raw.Slice(g + T + 0x14, 4));
+    byte gender = raw[g + T + 0x18];
+    byte language = raw[g + T + 0x19];
+    byte badges = raw[g + T + 0x1A];
+    ushort hours = BinaryPrimitives.ReadUInt16LittleEndian(raw.Slice(g + T + 0x22, 2));
+    byte minutes = raw[g + T + 0x24];
+    byte seconds = raw[g + T + 0x25];
+
+    _output.WriteLine($"GeneralOffset=0x{g:X}");
+    _output.WriteLine($"NomeHex={nameHex}");
+    _output.WriteLine($"TID={tid}, SID={sid}, Dinheiro={money}");
+    _output.WriteLine($"Genero={gender}, Idioma={language}, Insignias=0x{badges:X2}");
+    _output.WriteLine($"Tempo={hours}:{minutes:D2}:{seconds:D2}");
+
+    // Conferência cruzada com o Pikachu do time
+    var pk = new PK4(save.GetPartyRecord(0).ToArray());
+    _output.WriteLine($"Pikachu: TID={pk.TID16}, SID={pk.SID16}");
+
+    Assert.Equal(pk.TID16, tid);
+    Assert.Equal(pk.SID16, sid);
+}
+[Fact]
+public void Rc8_FindBagItems()
+{
+    byte[] data = File.ReadAllBytes(Path.Combine(Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
+    Assert.NotNull(save);
+
+    ReadOnlySpan<byte> general = data.AsSpan(save!.GeneralOffset, 0xF7CC);
+
+    int found = 0;
+    for (int i = 0; i + 12 <= general.Length; i += 2)
+    {
+        ushort id = BinaryPrimitives.ReadUInt16LittleEndian(general.Slice(i, 2));
+        ushort qty = BinaryPrimitives.ReadUInt16LittleEndian(general.Slice(i + 2, 2));
+        if (id != 4 || qty < 1 || qty > 999) continue;
+
+        // os próximos 8 bytes devem ser slots vazios
+        bool vazio = true;
+        for (int k = 4; k < 12; k++)
+            if (general[i + k] != 0) { vazio = false; break; }
+        if (!vazio) continue;
+
+        found++;
+        int from = Math.Max(0, i - 16);
+        int len = Math.Min(40, general.Length - from);
+        _output.WriteLine(
+            $"Acerto em 0x{i:X}: qty={qty}, contexto={Convert.ToHexString(general.Slice(from, len))}");
+    }
+
+    _output.WriteLine($"Total de acertos: {found}");
+}
+[Fact]
+public void Rc8_ListBagPairs()
+{
+    byte[] data = File.ReadAllBytes(Path.Combine(Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
+    Assert.NotNull(save);
+
+    ReadOnlySpan<byte> general = data.AsSpan(save!.GeneralOffset, 0xF7CC);
+
+    for (int i = 0x400; i + 4 <= 0xE00; i += 4)
+    {
+        ushort id = BinaryPrimitives.ReadUInt16LittleEndian(general.Slice(i, 2));
+        ushort qty = BinaryPrimitives.ReadUInt16LittleEndian(general.Slice(i + 2, 2));
+        if (id == 0 || id > 2000 || qty == 0 || qty > 999) continue;
+        _output.WriteLine($"0x{i:X}: id={id}, qty={qty}");
+    }
+}
+[Theory]
+[InlineData("Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv")]
+[InlineData("bolsa_teste.dsv")]
+public void DumpBagPairs(string fileName)
+{
+    byte[] data = File.ReadAllBytes(Path.Combine(Downloads, fileName));
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
+    Assert.NotNull(save);
+
+    ReadOnlySpan<byte> general = data.AsSpan(save!.GeneralOffset, 0xF7CC);
+
+    (string nome, int ini)[] padrao =
+    {
+        ("Items", 0x000), ("KeyItems", 0x294), ("TMHMs", 0x35C),
+        ("Mail", 0x4F0), ("Medicine", 0x520), ("Berries", 0x5C0),
+        ("Balls", 0x6C0), ("BattleItems", 0x720),
+    };
+
+    _output.WriteLine($"Arquivo: {fileName} ({data.Length} bytes)");
+
+    for (int abs = 0x644; abs + 4 <= 0xF00; abs += 4)
+    {
+        ushort id = BinaryPrimitives.ReadUInt16LittleEndian(general.Slice(abs, 2));
+        ushort qty = BinaryPrimitives.ReadUInt16LittleEndian(general.Slice(abs + 2, 2));
+        if (id == 0 || id > 2000 || qty == 0 || qty > 999) continue;
+
+        int rel = abs - 0x644;
+        string pouch = padrao.Last(p => p.ini <= rel).nome;
+        _output.WriteLine(
+            $"abs=0x{abs:X} rel=0x{rel:X} (padrao: {pouch}) id={id} qty={qty}");
+    }
+}
+
+[Fact]
+public void BolsaTeste_BagLayout_MatchesObservedOffsets()
+{
+    byte[] data = File.ReadAllBytes(Path.Combine(Downloads, "bolsa_teste.dsv"));
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
+    ReadOnlySpan<byte> general = data.AsSpan(save!.GeneralOffset, 0xF7CC);
+
+    (int rel, ushort id, ushort qty)[] esperado =
+    {
+        (0x000, 68, 1),   // Itens
+        (0x294, 744, 1),  // Key item
+        (0x298, 745, 1),  // Key item
+        (0x35C, 328, 1),  // TMs
+        (0x5B8, 137, 1),  // Cartas
+        (0x5E8, 17, 1),   // Medicina
+        (0x688, 149, 1),  // Berries
+        (0x788, 4, 4),    // Bolas
+        (0x7E8, 55, 1),   // Battle items
+    };
+
+    foreach (var (rel, id, qty) in esperado)
+    {
+        int abs = 0x644 + rel;
+        Assert.Equal(id, BinaryPrimitives.ReadUInt16LittleEndian(general.Slice(abs, 2)));
+        Assert.Equal(qty, BinaryPrimitives.ReadUInt16LittleEndian(general.Slice(abs + 2, 2)));
+    }
 }
 }
