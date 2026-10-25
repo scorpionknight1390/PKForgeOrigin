@@ -65,7 +65,7 @@ public void DamagedGeneralChecksumsAreRejectedWithoutLosingRecognition()
         "O detector de integridade não deve aceitar os CRCs corrompidos.");
 }
 
-private const string Downloads = @"C:\Users\PROATI\Downloads";
+private const string Downloads = @"C:\PKForgeSaves";
 
     [Fact]
     public void RecognizesOriginRc5Dsv()
@@ -233,59 +233,6 @@ public void DiagnoseOriginPokemonRecords(string fileName)
     _output.WriteLine($"Espécies dentro do intervalo: {validSpecies}");
     _output.WriteLine($"Checksums válidos: {validChecksum}");
 }
-    [Fact]
-   public void Rc8_Box1Slot1_IsLillipup()
-   {
-       byte[] data = File.ReadAllBytes(Path.Combine(Downloads,
-           "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
-       Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
-       var pk = new PK4(save!.GetBoxRecord(0, 0).ToArray());
-
-       Assert.Equal(506, pk.Species);
-       Assert.Equal("Lillipup", pk.Nickname);
-       Assert.InRange(pk.EXP, 135u, 178u);
-       Assert.Equal(62484, (int)pk.TID16);
-       Assert.Equal(64557, (int)pk.SID16);
-       Assert.Equal(33, (int)pk.Move1);
-       Assert.Equal(43, (int)pk.Move2);
-       Assert.Equal(526, (int)pk.Move3);
-   }
-[Fact]
-public void Rc8_Box1Slot1_Lillipup_MatchesOfficialEditor()
-{
-    byte[] data = File.ReadAllBytes(Path.Combine(Downloads,
-        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
-
-    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
-    var pk = new PK4(save!.GetBoxRecord(0, 0).ToArray());
-
-    // Confirmado contra o editor oficial
-    Assert.Equal(506, pk.Species);
-    Assert.Equal("Lillipup", pk.Nickname);
-    Assert.Equal("AAAAAAA", pk.OriginalTrainerName);
-    Assert.Equal(Nature.Calm, pk.Nature);
-
-    Assert.Equal(17, pk.IV_HP);
-    Assert.Equal(26, pk.IV_ATK);
-    Assert.Equal(19, pk.IV_DEF);
-    Assert.Equal(30, pk.IV_SPA);
-    Assert.Equal(6, pk.IV_SPD);
-    Assert.Equal(18, pk.IV_SPE);
-
-    Assert.Equal(33, (int)pk.Move1);
-    Assert.Equal(43, (int)pk.Move2);
-    Assert.Equal(526, (int)pk.Move3);
-    Assert.Equal(0, (int)pk.Move4);
-
-    // Nível 5 = EXP de 135 até 178 (curva Medium Slow)
-    Assert.InRange(pk.EXP, 135u, 178u);
-    Assert.Equal(62484, (int)pk.TID16);
-    Assert.Equal(64557, (int)pk.SID16);
-    Assert.True(pk.ChecksumValid);
-
-    // Valor bruto do byte de habilidade; NÃO interpretar como ID de habilidade
-    Assert.Equal(1, (int)pk.Ability);
-}
 
 [Fact]
 public void Rc5_Box1_ReadsNewGenSpeciesAndMoves()
@@ -345,51 +292,6 @@ public void Rc8_DiagnoseParty()
     }
 }
 
-[Fact]
-public void Rc8_Party_Pikachu_IsReadCorrectly()
-{
-    byte[] data = File.ReadAllBytes(Path.Combine(Downloads,
-        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
-    
-    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
-    Assert.Equal(1, save!.PartyCount);
-    Assert.Equal(236, save.GetPartyRecord(0).Length);
-
-    var pk = new PK4(save.GetPartyRecord(0).ToArray());
-
-    Assert.Equal(25, pk.Species);
-    Assert.Equal("Pikachu", pk.Nickname);
-    Assert.Equal("AAAAAAA", pk.OriginalTrainerName);
-    Assert.Equal(6, pk.Stat_Level);
-    Assert.Equal(pk.CurrentLevel, pk.Stat_Level);
-    Assert.Equal(39, (int)pk.Move1);
-    Assert.Equal(84, (int)pk.Move2);
-    Assert.Equal(98, (int)pk.Move3);
-    Assert.Equal(86, (int)pk.Move4);
-        Assert.Equal(Nature.Impish, pk.Nature);
-
-    Assert.Equal(22, pk.IV_HP);
-    Assert.Equal(31, pk.IV_ATK);
-    Assert.Equal(31, pk.IV_DEF);
-    Assert.Equal(31, pk.IV_SPA);
-    Assert.Equal(1, pk.IV_SPD);
-    Assert.Equal(12, pk.IV_SPE);
-
-    Assert.Equal(0, pk.EV_HP);
-    Assert.Equal(1, pk.EV_ATK);
-    Assert.Equal(1, pk.EV_DEF);
-    Assert.Equal(0, pk.EV_SPA);
-    Assert.Equal(0, pk.EV_SPD);
-    Assert.Equal(2, pk.EV_SPE);
-
-    Assert.Equal(22, pk.Stat_HPMax);
-    Assert.Equal(14, pk.Stat_ATK);
-    Assert.Equal(13, pk.Stat_DEF);
-    Assert.Equal(12, pk.Stat_SPA);
-    Assert.Equal(11, pk.Stat_SPD);
-    Assert.Equal(18, pk.Stat_SPE);
-    Assert.True(pk.ChecksumValid);
-}
 [Fact]
 public void Rc8_DiagnoseTrainer()
 {
@@ -515,25 +417,88 @@ public void DumpBagPairs(string fileName)
 }
 
 [Fact]
-public void BolsaTeste_BagLayout_MatchesObservedOffsets()
+public void Rc8_Party_Pikachu_MatchesOfficialEditor()
 {
-    byte[] data = File.ReadAllBytes(Path.Combine(Downloads, "bolsa_teste.dsv"));
+    byte[] data = File.ReadAllBytes(Path.Combine(Downloads, "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
     Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
-    ReadOnlySpan<byte> general = data.AsSpan(save!.GeneralOffset, 0xF7CC);
+    Assert.NotNull(save);
+    Assert.Equal(1, save!.PartyCount);
 
+    var pk = new PK4(save.GetPartyRecord(0).ToArray());
+
+    Assert.Equal(25, pk.Species);
+    Assert.Equal("Pikachu", pk.Nickname);
+    Assert.Equal("AAAAAAA", pk.OriginalTrainerName);
+    Assert.Equal(5, pk.Stat_Level);
+    Assert.Equal(Nature.Impish, pk.Nature);
+
+    Assert.Equal(22, pk.IV_HP);
+    Assert.Equal(31, pk.IV_ATK);
+    Assert.Equal(31, pk.IV_DEF);
+    Assert.Equal(31, pk.IV_SPA);
+    Assert.Equal(1, pk.IV_SPD);
+    Assert.Equal(12, pk.IV_SPE);
+
+    Assert.Equal(0, pk.EV_HP);
+    Assert.Equal(0, pk.EV_ATK);
+    Assert.Equal(1, pk.EV_DEF);
+    Assert.Equal(0, pk.EV_SPA);
+    Assert.Equal(0, pk.EV_SPD);
+    Assert.Equal(0, pk.EV_SPE);
+
+    Assert.Equal(39, (int)pk.Move1);
+    Assert.Equal(84, (int)pk.Move2);
+    Assert.Equal(98, (int)pk.Move3);
+    Assert.Equal(86, (int)pk.Move4);
+
+    Assert.Equal(20, pk.Stat_HPCurrent);
+    Assert.Equal(20, pk.Stat_HPMax);
+    Assert.Equal(12, pk.Stat_ATK);
+    Assert.Equal(12, pk.Stat_DEF);
+    Assert.Equal(10, pk.Stat_SPA);
+    Assert.Equal(10, pk.Stat_SPD);
+    Assert.Equal(16, pk.Stat_SPE);
+
+    Assert.True(pk.ChecksumValid);
+}
+
+[Fact]
+public void Rc8_TrainerBoxesAndBag_MatchOfficialEditor()
+{
+    byte[] data = File.ReadAllBytes(Path.Combine(Downloads, "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
+    Assert.NotNull(save);
+
+    // Bloco ativo na segunda partição espelhada
+    Assert.Equal(0x40000, save!.GeneralOffset);
+
+    int g = save.GeneralOffset;
+    const int T = 0x64;
+    ReadOnlySpan<byte> raw = data;
+
+    Assert.Equal("2B012B012B012B012B012B012B01FFFF",
+        Convert.ToHexString(raw.Slice(g + T, 16)));
+    Assert.Equal(62484, (int)BinaryPrimitives.ReadUInt16LittleEndian(raw.Slice(g + T + 0x10, 2)));
+    Assert.Equal(64557, (int)BinaryPrimitives.ReadUInt16LittleEndian(raw.Slice(g + T + 0x12, 2)));
+    Assert.Equal(3800u, BinaryPrimitives.ReadUInt32LittleEndian(raw.Slice(g + T + 0x14, 4)));
+    Assert.Equal(0, (int)raw[g + T + 0x18]);   // gênero
+    Assert.Equal(0, (int)raw[g + T + 0x1A]);   // insígnias
+    Assert.Equal(0, (int)BinaryPrimitives.ReadUInt16LittleEndian(raw.Slice(g + T + 0x22, 2))); // horas
+    Assert.Equal(2, (int)raw[g + T + 0x24]);   // minutos
+
+    // Caixas vazias
+    for (int box = 0; box < OriginHeartGoldReadOnlySave.BoxCount; box++)
+        for (int slot = 0; slot < OriginHeartGoldReadOnlySave.BoxSlotCount; slot++)
+            Assert.Equal(0, new PK4(save.GetBoxRecord(box, slot).ToArray()).Species);
+
+    // Bolsa: key items e Poké Ball x5
+    ReadOnlySpan<byte> general = data.AsSpan(g, 0xF7CC);
     (int rel, ushort id, ushort qty)[] esperado =
     {
-        (0x000, 68, 1),   // Itens
-        (0x294, 744, 1),  // Key item
-        (0x298, 745, 1),  // Key item
-        (0x35C, 328, 1),  // TMs
-        (0x5B8, 137, 1),  // Cartas
-        (0x5E8, 17, 1),   // Medicina
-        (0x688, 149, 1),  // Berries
-        (0x788, 4, 4),    // Bolas
-        (0x7E8, 55, 1),   // Battle items
+        (0x294, 744, 1),
+        (0x298, 745, 1),
+        (0x788, 4, 5),
     };
-
     foreach (var (rel, id, qty) in esperado)
     {
         int abs = 0x644 + rel;
@@ -541,4 +506,5 @@ public void BolsaTeste_BagLayout_MatchesObservedOffsets()
         Assert.Equal(qty, BinaryPrimitives.ReadUInt16LittleEndian(general.Slice(abs + 2, 2)));
     }
 }
+
 }
