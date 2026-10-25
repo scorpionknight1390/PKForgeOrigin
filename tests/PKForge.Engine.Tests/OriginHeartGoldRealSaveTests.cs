@@ -522,4 +522,61 @@ public void OriginHeartGold_IsAlwaysReadOnly()
 
     Assert.False(engine.Validate(bytes));
 }
+
+[Fact]
+public void OriginSession_ReadsHomeSave_LikeOfficialEditor()
+{
+    byte[] bytes = File.ReadAllBytes(Path.Combine(Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+    using var session = new OriginHeartGoldEngineSession(bytes, "teste");
+
+    // Snapshot: 24 caixas x 30 + 1 do time, caixas vazias
+    var snap = session.Snapshot;
+    Assert.Equal(4, snap.Generation);
+    Assert.Equal(24 * 30 + 1, snap.Slots.Count);
+    Assert.All(snap.Slots.Where(s => s.Box >= 0), s => Assert.Null(s.Species));
+    var party = Assert.Single(snap.Slots, s => s.Box == -1);
+    Assert.Equal(25, party.Species);
+
+    // Pikachu
+    var pk = session.ReadEntity(-1, 0);
+    Assert.False(pk.IsEmpty);
+    Assert.Equal("Pikachu", pk.Nickname);
+    Assert.Equal(5, pk.Level);
+    Assert.Equal(new[] { 22, 31, 31, 31, 1, 12 }, pk.IVs.ToArray());
+    Assert.Equal(new[] { 0, 0, 1, 0, 0, 0 }, pk.EVs.ToArray());
+    Assert.Equal(new[] { 39, 84, 98, 86 }, new[] { pk.Move1, pk.Move2, pk.Move3, pk.Move4 });
+    Assert.Equal(new[] { 20, 12, 12, 10, 10, 16 }, pk.Stats!.ToArray());
+
+    // Treinador
+    var t = session.GetTrainer();
+    Assert.Equal("AAAAAAA", t.Name);
+    Assert.Equal(62484, t.TID);
+    Assert.Equal(64557, t.SID);
+    Assert.Equal(3800u, t.Money);
+    var stats = session.GetTrainerStats();
+    Assert.Equal(0, stats.PlayTimeHours);
+    Assert.Equal(2, stats.PlayTimeMinutes);
+
+    // Bolsa: só 2 key items e 5 Poké Balls
+    var items = session.GetBag().SelectMany(p => p.Items).ToList();
+    Assert.Equal(3, items.Count);
+    Assert.Contains(items, i => i.Id == 744 && i.Count == 1);
+    Assert.Contains(items, i => i.Id == 745 && i.Count == 1);
+    Assert.Contains(items, i => i.Id == 4 && i.Count == 5);
+}
+
+[Fact]
+public void OriginSession_RefusesEveryEditAndNeverChangesBytes()
+{
+    byte[] bytes = File.ReadAllBytes(Path.Combine(Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+    using var session = new OriginHeartGoldEngineSession(bytes, "teste");
+
+    Assert.Throws<NotSupportedException>(() => session.ApplyEdit(-1, 0, new EntityEdit(Nickname: "X")));
+    Assert.Throws<NotSupportedException>(() => session.SetItemCount("Items", 4, 9));
+    Assert.Throws<NotSupportedException>(() => session.SetTrainer(new TrainerInfo("X", 1, 1, 1u, 0)));
+
+    Assert.True(session.Serialize().Span.SequenceEqual(bytes));
+}
 }
