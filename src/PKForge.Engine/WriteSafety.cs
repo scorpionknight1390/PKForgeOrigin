@@ -91,6 +91,10 @@ internal static class WriteSafety
 
     public static LayoutRisk? AssessLayoutRisk(ReadOnlyMemory<byte> bytes)
     {
+        if (OriginHeartGoldDetector.IsOriginHeartGold(RetroArchSaveContainer.Decode(bytes.Span)))
+        return new LayoutRisk(LayoutRiskKind.CorruptingLayout,
+            "Origin HeartGold uses an expanded save layout (24 boxes, larger blocks) that PKForge can read but cannot write yet.");
+            
         Parsed? parsed;
         try { parsed = Parse(bytes); }
         catch (InvalidDataException) { return null; }

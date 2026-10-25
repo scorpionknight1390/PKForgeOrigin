@@ -6,6 +6,7 @@ using PKHeX.Core;
 using Xunit.Abstractions;
 using System.Buffers.Binary;
 using System.Linq;
+using PKForge.Domain;
 
 namespace PKForge.Engine.Tests;
 
@@ -507,4 +508,18 @@ public void Rc8_TrainerBoxesAndBag_MatchOfficialEditor()
     }
 }
 
+[Fact]
+public void OriginHeartGold_IsAlwaysReadOnly()
+{
+    byte[] bytes = File.ReadAllBytes(Path.Combine(Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+    var engine = new SaveEngine();
+
+    var risk = engine.AssessLayoutRisk(bytes);
+    Assert.NotNull(risk);
+    Assert.Equal(LayoutRiskKind.CorruptingLayout, risk!.Kind);
+    Assert.False(risk.UserMayProceed);
+
+    Assert.False(engine.Validate(bytes));
+}
 }
