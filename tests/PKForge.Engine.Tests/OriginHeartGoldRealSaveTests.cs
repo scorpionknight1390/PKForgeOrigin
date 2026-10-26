@@ -579,4 +579,29 @@ public void OriginSession_RefusesEveryEditAndNeverChangesBytes()
 
     Assert.True(session.Serialize().Span.SequenceEqual(bytes));
 }
+
+[Fact]
+public void SaveEngine_OpensOriginHeartGold_ReadOnly()
+{
+    byte[] bytes = File.ReadAllBytes(Path.Combine(Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+    var engine = new SaveEngine();
+
+    var snap = engine.Open(bytes, "teste");
+    Assert.Equal("ORIGINHEARTGOLD", snap.Format);
+    Assert.Equal(4, snap.Generation);
+    Assert.Equal(24 * 30 + 1, snap.Slots.Count);
+
+    using var session = engine.OpenSession(bytes, "teste");
+    Assert.IsType<OriginHeartGoldEngineSession>(session);
+    Assert.Equal("AAAAAAA", session.GetTrainer().Name);
+
+    var description = engine.TryDescribe(bytes, "teste");
+    Assert.NotNull(description);
+    Assert.Equal("AAAAAAA", description!.TrainerName);
+
+    // gravação continua barrada
+    Assert.False(engine.Validate(bytes));
+    Assert.Equal(LayoutRiskKind.CorruptingLayout, engine.AssessLayoutRisk(bytes)!.Kind);
+}
 }

@@ -6,9 +6,9 @@ namespace PKForge.Engine;
 /// <summary>Adapts the pinned PKHeX.Core save parser without leaking engine types.</summary>
 public sealed class SaveEngine : IFormatAwareSaveEngine
 {
-    private const string OriginHeartGoldNotReady =
-        "Origin HeartGold foi reconhecido, mas o leitor do layout ampliado " +
-        "ainda não foi implementado. O save original não foi alterado.";
+        private const string OriginHeartGoldNotReady =
+        "This save is Origin HeartGold, which PKForge opens read-only. " +
+        "Set the game to automatic detection to open it. The file was not touched.";
         
     static SaveEngine() => LegalityRules.Apply();
 
@@ -19,6 +19,9 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
     /// </summary>
     public ISaveEngineSession OpenSession(ReadOnlyMemory<byte> bytes, string? displayName, SaveFormat format)
     {
+        if (OriginHeartGoldDetector.IsOriginHeartGold(
+                RetroArchSaveContainer.Decode(bytes.Span)))
+            return OpenOriginHeartGold(bytes, displayName);
         if (format == SaveFormat.Auto) return OpenSession(bytes, displayName);
         var decoded = RetroArchSaveContainer.Decode(bytes.Span);
         ThrowIfOriginHeartGold(decoded);
@@ -52,8 +55,9 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
 
     public SaveSnapshot Open(ReadOnlyMemory<byte> bytes, string? displayName = null)
     {
-        ThrowIfOriginHeartGold(
-            RetroArchSaveContainer.Decode(bytes.Span));
+        if (OriginHeartGoldDetector.IsOriginHeartGold(
+                RetroArchSaveContainer.Decode(bytes.Span)))
+            return OpenOriginHeartGold(bytes, displayName).Snapshot;
         if (SaveParser.IsPokemonUnbound(RetroArchSaveContainer.Decode(bytes.Span)))
             return OpenUnbound(bytes, displayName).Snapshot;
         if (SaveParser.IsPokemonGsChronicles(RetroArchSaveContainer.Decode(bytes.Span)))
@@ -80,6 +84,9 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
 
     public ISaveEngineSession OpenSession(ReadOnlyMemory<byte> bytes, string? displayName = null)
     {
+        if (OriginHeartGoldDetector.IsOriginHeartGold(
+                RetroArchSaveContainer.Decode(bytes.Span)))
+            return OpenOriginHeartGold(bytes, displayName);
         if (SaveParser.IsPokemonUnbound(RetroArchSaveContainer.Decode(bytes.Span)))
             return OpenUnbound(bytes, displayName);
         if (SaveParser.IsPokemonGsChronicles(RetroArchSaveContainer.Decode(bytes.Span)))
@@ -89,6 +96,9 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
         return new SaveEngineSession(bytes, displayName);
     }
 
+    private static OriginHeartGoldEngineSession OpenOriginHeartGold(
+        ReadOnlyMemory<byte> bytes, string? displayName) =>
+        new(bytes, displayName);
     private static Unbound.UnboundEngineSession OpenUnbound(ReadOnlyMemory<byte> bytes, string? displayName) =>
         new(bytes, displayName);
 
@@ -200,15 +210,21 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
     public SaveDescription? TryDescribe(ReadOnlyMemory<byte> bytes, string? displayName = null)
     {
         var raw = RetroArchSaveContainer.Decode(bytes.Span);
-        if (OriginHeartGoldDetector.IsOriginHeartGold(raw))
+                if (OriginHeartGoldDetector.IsOriginHeartGold(raw))
         {
-            return new SaveDescription(
-                "Origin HeartGold (não editável ainda)",
-                4,
-                "",
-                "",
-                null);
-        };
+            try
+            {
+                using var origin = new OriginHeartGoldEngineSession(bytes, displayName);
+                var trainer = origin.GetTrainer();
+                var time = origin.GetTrainerStats();
+                return new SaveDescription("Origin HeartGold (read-only)", 4,
+                    trainer.Name, $"{time.PlayTimeHours}:{time.PlayTimeMinutes:D2}");
+            }
+            catch (Exception)
+            {
+                return new SaveDescription("Origin HeartGold (read-only)", 4, "", "");
+            }
+        }
         
         if (!SaveParser.TryGetSaveFile(raw, out var save) || save is null)
             return null;
