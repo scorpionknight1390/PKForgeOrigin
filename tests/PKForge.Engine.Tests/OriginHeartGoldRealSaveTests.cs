@@ -604,4 +604,23 @@ public void SaveEngine_OpensOriginHeartGold_ReadOnly()
     Assert.False(engine.Validate(bytes));
     Assert.Equal(LayoutRiskKind.CorruptingLayout, engine.AssessLayoutRisk(bytes)!.Kind);
 }
+
+[Fact]
+public void DetectionToOpen_UsesAutoRouteForOrigin()
+{
+    byte[] bytes = File.ReadAllBytes(Path.Combine(Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+    var engine = new SaveEngine();
+
+    var description = engine.TryDescribe(bytes, "teste");
+    Assert.NotNull(description);
+
+    var guess = SaveIdentityRules.Guess(description!.GameName, description.Generation,
+        "teste.dsv", null, "Nintendo DS");
+    Assert.Equal(SaveFormat.Auto, guess.Format);
+
+    using var session = engine.OpenSession(bytes, "teste", guess.Format);
+    Assert.IsType<OriginHeartGoldEngineSession>(session);
+}
+
 }
