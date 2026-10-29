@@ -154,6 +154,8 @@ public static class SaveIdentityRules
             "Unbound" => SaveFormat.Unbound,
             "Radical Red" => SaveFormat.RadicalRed,
             "GS Chronicles" => SaveFormat.GsChronicles,
+            _ when engineGame.StartsWith("Origin HeartGold", StringComparison.Ordinal)
+                => SaveFormat.Auto,
             _ => SaveFormat.Standard,
         };
         return new SaveIdentityGuess(label, FamilyOf(engineGame), format, suggested, label);

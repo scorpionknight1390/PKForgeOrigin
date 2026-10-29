@@ -16,6 +16,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../external/PKHeX-Plugins/PKHeX.Core.AutoMod/**/*.cs" />
+    <Compile Remove="../../external/PKHeX-Plugins/PKHeX.Core.AutoMod/obj/**" />
+    <Compile Remove="../../external/PKHeX-Plugins/PKHeX.Core.AutoMod/bin/**" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../external/PKHeX/PKHeX.Core/PKHeX.Core.csproj" />
