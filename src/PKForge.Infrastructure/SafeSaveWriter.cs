@@ -8,7 +8,7 @@ public sealed class SafeSaveWriter(
     ISaveEngine engine,
     IBackupService backups,
     ISaveFileAccess access,
-    ISaveIdentityStore? identities = null) : ISafeSaveWriter
+    ISaveIdentityStore? identities = null) : ISafeSaveWriter, ISaveRestoreWriter
 {
     private readonly HashSet<string> _confirmedLayoutRisk = new(StringComparer.Ordinal);
     private readonly Lock _gate = new();
@@ -83,32 +83,63 @@ public sealed class SafeSaveWriter(
     }
 
     public ValueTask<SaveWriteReceipt> WriteAsync(
-        string documentId,
-        SaveSnapshot original,
-        ReadOnlyMemory<byte> candidate,
-        string? changeDescription = null,
-        CancellationToken cancellationToken = default)
-        => WriteCoreAsync(documentId, original, candidate, scope: null, changeDescription, cancellationToken);
+    string documentId,
+    SaveSnapshot original,
+    ReadOnlyMemory<byte> candidate,
+    string? changeDescription = null,
+    CancellationToken cancellationToken = default)
+    => WriteCoreAsync(
+        documentId,
+        original,
+        candidate,
+        scope: null,
+        isRestore: false,
+        changeDescription: changeDescription,
+        cancellationToken: cancellationToken);
 
     public ValueTask<SaveWriteReceipt> WriteScopedAsync(
-        string documentId,
-        SaveSnapshot original,
-        ReadOnlyMemory<byte> candidate,
-        WriteScope scope,
-        string? changeDescription = null,
-        CancellationToken cancellationToken = default)
+    string documentId,
+    SaveSnapshot original,
+    ReadOnlyMemory<byte> candidate,
+    WriteScope scope,
+    string? changeDescription = null,
+    CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(scope);
-        return WriteCoreAsync(documentId, original, candidate, scope, changeDescription, cancellationToken);
+    ArgumentNullException.ThrowIfNull(scope);
+
+    return WriteCoreAsync(
+        documentId,
+        original,
+        candidate,
+        scope,
+        isRestore: false,
+        changeDescription: changeDescription,
+        cancellationToken: cancellationToken);
     }
 
+    public ValueTask<SaveWriteReceipt> RestoreAsync(
+    string documentId,
+    SaveSnapshot original,
+    ReadOnlyMemory<byte> candidate,
+    string? changeDescription = null,
+    CancellationToken cancellationToken = default)
+    => WriteCoreAsync(
+        documentId,
+        original,
+        candidate,
+        scope: null,
+        isRestore: true,
+        changeDescription: changeDescription,
+        cancellationToken: cancellationToken);
+
     private async ValueTask<SaveWriteReceipt> WriteCoreAsync(
-        string documentId,
-        SaveSnapshot original,
-        ReadOnlyMemory<byte> candidate,
-        WriteScope? scope,
-        string? changeDescription,
-        CancellationToken cancellationToken)
+    string documentId,
+    SaveSnapshot original,
+    ReadOnlyMemory<byte> candidate,
+    WriteScope? scope,
+    bool isRestore,
+    string? changeDescription,
+    CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
         ArgumentNullException.ThrowIfNull(original);
@@ -127,16 +158,19 @@ public sealed class SafeSaveWriter(
         if (!engine.Validate(candidate))
             throw new InvalidDataException("The candidate save failed engine validation; the original was not touched.");
 
-        // Structural safety net. A whole-file restore (Unrestricted) is the recovery path
+        // Normal writes must pass layout and slot-diff checks. Whole-file recovery
+        // uses the separate restore interface; candidate validation above still applies.
         // and must stay open; every other write is refused when the engine is not sure of
         // the layout (a ROM hack parsed as vanilla rewrites checksums and slots in a layout
         // the game does not use) or when the diff touches slots the mutation did not target.
-        if (scope is not { Unrestricted: true })
+        if (!isRestore)
         {
             if (Refusal(documentId, original) is { } refusal)
                 throw refusal;
+
             if (engine.CheckWriteSafety(original.OriginalBytes, candidate, scope) is { } unsafeDiff)
-                throw new UnsafeSaveWriteException($"Write refused: {unsafeDiff} The original was not touched.");
+                throw new UnsafeSaveWriteException(
+                    $"Write refused: {unsafeDiff} The original was not touched.");
         }
 
         var backup = await backups.CreateAsync(original, changeDescription, documentId, cancellationToken).ConfigureAwait(false);

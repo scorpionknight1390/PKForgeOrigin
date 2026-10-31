@@ -62,6 +62,8 @@ public static class MauiProgram
             sp.GetRequiredService<ISaveIdentityStore>()));
         builder.Services.AddSingleton<Services.ProtectionStore>();
         builder.Services.AddSingleton<ISafeSaveWriter, SafeSaveWriter>();
+        builder.Services.AddSingleton<ISaveRestoreWriter>(sp =>
+            (ISaveRestoreWriter)sp.GetRequiredService<ISafeSaveWriter>());
         builder.Services.AddSingleton<ILegalityService, LegalityService>();
         builder.Services.AddSingleton<ILegalityAssistService>(LegalityAssistService.Shared);
         builder.Services.AddSingleton<IStatPreviewService, StatPreviewService>();

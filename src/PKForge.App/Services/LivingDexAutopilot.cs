@@ -158,6 +158,7 @@ public static class LivingDexAutopilot
         return new LivingDexExecutor(
             services.GetRequiredService<ISaveEngine>(),
             services.GetRequiredService<ISafeSaveWriter>(),
+            services.GetRequiredService<ISaveRestoreWriter>(),
             services.GetRequiredService<ISaveFileAccess>(),
             services.GetService<IBankService>(),
             services.GetRequiredService<IEvolutionService>(),

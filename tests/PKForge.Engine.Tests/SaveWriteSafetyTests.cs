@@ -383,7 +383,7 @@ public sealed class SaveWriteSafetyTests
         var broken = rr.ToArray();
         broken[14 * 0x1000 + 0xFF6] ^= 0x01; // ambiguous current state
         var (writer, access) = Writer();
-        await writer.WriteScopedAsync("doc", Snap(broken), rr, WriteScope.Everything);
+        await writer.RestoreAsync("doc", Snap(broken), rr);
         Assert.Equal(1, access.Writes);
     }
 

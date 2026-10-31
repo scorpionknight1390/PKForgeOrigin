@@ -165,18 +165,30 @@ public interface ISafeSaveWriter
     /// </summary>
     string? WhyWritesAreRefused(string documentId, SaveSnapshot original) => null;
 }
+/// <summary>
+/// Performs deliberate whole-file recovery operations, such as restoring
+/// a backup or rolling back a multi-save operation.
+/// </summary>
+public interface ISaveRestoreWriter
+{
+    ValueTask<SaveWriteReceipt> RestoreAsync(
+        string documentId,
+        SaveSnapshot original,
+        ReadOnlyMemory<byte> candidate,
+        string? changeDescription = null,
+        CancellationToken cancellationToken = default);
+}
 
 /// <summary>A save slot address; box -1 is the party.</summary>
 public readonly record struct SlotRef(int Box, int Slot);
 
 /// <summary>
-/// What a write is allowed to change. <see cref="Slots"/> lists the targeted slots (any
-/// party slot unlocks the whole party, which compacts); <see cref="Unrestricted"/> is for
-/// deliberate whole-file writes such as restoring a backup.
+/// Which slots a normal write is allowed to change. Any party slot unlocks
+/// the whole party, which compacts.
+/// Whole-file recovery uses ISaveRestoreWriter instead.
 /// </summary>
-public sealed record WriteScope(IReadOnlyCollection<SlotRef> Slots, bool Unrestricted = false)
+public sealed record WriteScope(IReadOnlyCollection<SlotRef> Slots)
 {
-    public static WriteScope Everything { get; } = new([], Unrestricted: true);
     public static WriteScope Only(params SlotRef[] slots) => new(slots);
 }
 

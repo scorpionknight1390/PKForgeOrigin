@@ -225,12 +225,13 @@ public sealed class LivingDexStaging : IDisposable
 /// first); destination before sources, so a crash can duplicate but never lose a Pokémon;
 /// Bank changes after the saves they depend on.</item>
 /// <item>Any failure or a cancel once writing started rolls every written save back to its
-/// original bytes (through the writer's unrestricted restore path) and undoes the Bank.</item>
+/// original bytes (through <see cref="ISaveRestoreWriter.RestoreAsync"/>) and undoes the Bank.</item>
 /// </list>
 /// </summary>
 public sealed class LivingDexExecutor(
     ISaveEngine engine,
     ISafeSaveWriter writer,
+    ISaveRestoreWriter restoreWriter,
     ISaveFileAccess access,
     IBankService? bank,
     IEvolutionService evolutions,
@@ -573,8 +574,12 @@ public sealed class LivingDexExecutor(
             try
             {
                 var now = new SaveSnapshot(state.Snapshot.Format, state.Snapshot.Generation, candidate, [], state.Snapshot.DisplayName);
-                await writer.WriteScopedAsync(state.Save.DocumentId, now, state.Original, WriteScope.Everything,
-                    $"{Description} rollback", CancellationToken.None).ConfigureAwait(false);
+                await restoreWriter.RestoreAsync(
+                    state.Save.DocumentId,
+                    now,
+                    state.Original,
+                    $"{Description} rollback",
+                    CancellationToken.None).ConfigureAwait(false);
                 sessions?.MarkWritten(state.Save.DocumentId, state.Original);
             }
             catch (Exception error)

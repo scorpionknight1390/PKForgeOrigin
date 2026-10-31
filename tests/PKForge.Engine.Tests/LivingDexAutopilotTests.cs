@@ -88,7 +88,14 @@ public sealed class LivingDexAutopilotTests : IDisposable
         var squirtle = BankSquirtle();
         var entry = bank.Add(squirtle, _engine.TryDescribeEntity(squirtle, "test")!);
         var writer = new SafeSaveWriter(_engine, backups, access);
-        var executor = new LivingDexExecutor(_engine, writer, access, bank, new EvolutionService(), new LegalityService());
+        var executor = new LivingDexExecutor(
+            _engine,
+            writer,
+            writer,
+            access,
+            bank,
+            new EvolutionService(),
+            new LegalityService());
         var saves = new Dictionary<string, DetectedSave>(StringComparer.Ordinal)
         {
             [DestId] = new(DestId, "black2.sav", "Pokémon Black 2", EmulatorKind.MelonDS, false, null, 5),

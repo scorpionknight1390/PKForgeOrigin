@@ -170,9 +170,6 @@ internal static class WriteSafety
 
     public static string? CheckWriteSafety(ReadOnlyMemory<byte> original, ReadOnlyMemory<byte> candidate, WriteScope? scope)
     {
-        if (scope is { Unrestricted: true })
-            return null;
-
         Parsed? before, after;
         try
         {
