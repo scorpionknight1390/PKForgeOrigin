@@ -278,6 +278,9 @@ public interface IMonInfoService
     /// <summary>One move's in-game type, category and PP with its reference numbers (no learn data); null for unknown ids.</summary>
     MoveChoice? GetMove(ISaveEngineSession session, int move);
 
+    /// <summary>Nome do movimento no jogo aberto; null quando não houver referência própria.</summary>
+    string? GetMoveName(ISaveEngineSession session, int move) => null;
+
     /// <summary>The move's maximum PP with 0, 1, 2 and 3 PP Ups, by the slot's own format rules.</summary>
     IReadOnlyList<int> GetMaxPPByUps(ISaveEngineSession session, int box, int slot, int move);
 

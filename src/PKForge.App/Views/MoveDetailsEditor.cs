@@ -27,7 +27,7 @@ public static class MoveDetailsEditor
             {
                 var move = details.Moves[i];
                 // "Move 1 · Thunderbolt" over "Electric · Special · PP 15/24 · Ups 3/3 · Legal · Level Up".
-                var name = MoveName(data, move.Move);
+                var name = MoveName(data, session, move.Move);
                 var facts = move.Move == 0 ? null : InfoPickers.Info?.GetMove(session, move.Move);
                 var kind = facts is null ? "" : $"{TypeFacts.Name(facts.Type)} · {TypeFacts.CategoryName(facts.Category)} · ";
                 var verdict = legality.Move(i);
@@ -73,8 +73,13 @@ public static class MoveDetailsEditor
         }
     }
 
-    private static string MoveName(IGameDataService data, int id) =>
-        id == 0 ? "(none)" : (uint)id < (uint)data.MoveNames.Count && data.MoveNames[id].Length > 0 ? data.MoveNames[id] : $"#{id}";
+    private static string MoveName(IGameDataService data, ISaveEngineSession session, int id) =>
+    id == 0 ? "(none)" :
+    InfoPickers.Info?.GetMoveName(session, id) is { Length: > 0 } gameName
+        ? gameName
+        : (uint)id < (uint)data.MoveNames.Count && data.MoveNames[id].Length > 0
+            ? data.MoveNames[id]
+            : $"#{id}";
 
     private static async Task<bool> EditMoveAsync(Grid host, ISaveEngineSession session, int box, int slot, int index)
     {
@@ -89,7 +94,7 @@ public static class MoveDetailsEditor
         var facts = InfoPickers.Info?.GetMove(session, detail.Move);
         var summary = facts is null ? null
             : $"{TypeFacts.Name(facts.Type)} · {TypeFacts.CategoryName(facts.Category)} · {InfoKit.MoveNumbers(facts with { PP = detail.MaxPP })}";
-        var choice = await EditorMenu.ShowAsync(host, $"Move {index + 1} · {MoveName(data, detail.Move)}", summary,
+        var choice = await EditorMenu.ShowAsync(host, $"Move {index + 1} · {MoveName(data, session, detail.Move)}", summary,
             new PadOption($"PP · {detail.PP}/{detail.MaxPP}", Detail: "Current PP left"),
             new PadOption($"PP Ups · {detail.PPUps}/3", Detail: $"Max PP {detail.MaxPP}"),
             new PadOption("Restore PP", Detail: detail.PP == detail.MaxPP ? "Already full" : $"{detail.PP} → {detail.MaxPP}"));
@@ -143,7 +148,7 @@ public static class MoveDetailsEditor
     {
         var details = session.GetMoveDetails(box, slot);
         var data = IPlatformApplication.Current!.Services.GetRequiredService<IGameDataService>();
-        string Name(int id) => id == 0 ? "(none)" : (uint)id < (uint)data.MoveNames.Count ? data.MoveNames[id] : $"#{id}";
+        string Name(int id) => MoveName(data, session, id);
         var legality = await LegalityAssistUi.MoveLegalityAsync(session, box, slot);
         var choices = details.RelearnMoves.Select((move, i) =>
         {

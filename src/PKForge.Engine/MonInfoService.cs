@@ -19,6 +19,32 @@ public sealed class MonInfoService : IMonInfoService
     public IReadOnlyList<MoveChoice> GetMoveChoices(ISaveEngineSession session, int box, int slot, int? species = null, int? form = null)
     {
         ArgumentNullException.ThrowIfNull(session);
+        // Origin HeartGold utiliza IDs, nomes e atributos próprios.
+if (session is OriginHeartGoldEngineSession)
+{
+    if (!OriginHeartGoldMoveData.IsAvailable)
+        return [];
+
+    return OriginHeartGoldMoveData.AvailableMoves
+        .Select(move =>
+        {
+            var fact = DexFacts.Move(move.Id);
+
+            return new MoveChoice(
+                move.Id,
+                move.Type,
+                TypeFacts.CategoryIn(
+                    session.Generation,
+                    fact?.Category ?? MoveCategory.Status,
+                    move.Type),
+                move.Power,
+                move.Accuracy,
+                move.BasePp,
+                default,
+                fact?.Effect ?? "");
+        })
+        .ToList();
+}
         // Romhack sessions number moves their own way: callers fall back to the plain list.
         if (session is not SaveEngineSession engine)
             return [];
@@ -175,26 +201,99 @@ public sealed class MonInfoService : IMonInfoService
         catch (Exception e) when (e is ArgumentException or IndexOutOfRangeException or InvalidOperationException) { return null; }
     }
 
-    public MoveChoice? GetMove(ISaveEngineSession session, int move)
+
+public MoveChoice? GetMove(ISaveEngineSession session, int move)
+{
+    ArgumentNullException.ThrowIfNull(session);
+
+    // Origin HeartGold usa seu próprio catálogo de movimentos.
+    if (session is OriginHeartGoldEngineSession)
     {
-        ArgumentNullException.ThrowIfNull(session);
-        if (move <= 0 || session is not SaveEngineSession engine || move > engine.SaveFile.MaxMoveID) return null;
-        var context = engine.SaveFile.Context;
-        var fact = DexFacts.Move(move);
-        var types = MoveInfo.GetTypeTable(context);
-        var pp = MoveInfo.GetPPTable(context);
-        var type = move < types.Length ? types[move] : fact?.Type ?? 0;
-        return new MoveChoice(move, type, TypeFacts.CategoryIn(session.Generation, fact?.Category ?? MoveCategory.Status, type),
-            fact?.Power ?? 0, fact?.Accuracy ?? 0, move < pp.Length ? pp[move] : 0, default, fact?.Effect ?? "");
+        if (!OriginHeartGoldMoveData.TryGet(move, out var originMove) ||
+            originMove.BasePp <= 0)
+            return null;
+
+        var originFact = DexFacts.Move(move);
+
+        return new MoveChoice(
+            move,
+            originMove.Type,
+            TypeFacts.CategoryIn(
+    session.Generation,
+    originFact?.Category ?? MoveCategory.Status,
+    originMove.Type),
+            originMove.Power,
+            originMove.Accuracy,
+            originMove.BasePp,
+            default,
+            originFact?.Effect ?? "");
     }
 
-    public IReadOnlyList<int> GetMaxPPByUps(ISaveEngineSession session, int box, int slot, int move)
+    if (move <= 0 ||
+        session is not SaveEngineSession engine ||
+        move > engine.SaveFile.MaxMoveID)
+        return null;
+
+    var context = engine.SaveFile.Context;
+    var fact = DexFacts.Move(move);
+    var types = MoveInfo.GetTypeTable(context);
+    var pp = MoveInfo.GetPPTable(context);
+    var type = move < types.Length ? types[move] : fact?.Type ?? 0;
+
+    return new MoveChoice(
+        move,
+        type,
+        TypeFacts.CategoryIn(
+            session.Generation,
+            fact?.Category ?? MoveCategory.Status,
+            type),
+        fact?.Power ?? 0,
+        fact?.Accuracy ?? 0,
+        move < pp.Length ? pp[move] : 0,
+        default,
+        fact?.Effect ?? "");
+}
+public string? GetMoveName(ISaveEngineSession session, int move)
+{
+    ArgumentNullException.ThrowIfNull(session);
+
+    if (session is not OriginHeartGoldEngineSession)
+        return null;
+
+    return OriginHeartGoldMoveData.TryGet(move, out var originMove)
+        ? originMove.Name
+        : null;
+}
+public IReadOnlyList<int> GetMaxPPByUps(
+    ISaveEngineSession session, int box, int slot, int move)
+{
+    ArgumentNullException.ThrowIfNull(session);
+
+    // Usa exclusivamente o PP base do catálogo Origin.
+    if (session is OriginHeartGoldEngineSession)
     {
-        ArgumentNullException.ThrowIfNull(session);
-        if (session is not SaveEngineSession engine || move <= 0) return [];
-        var pk = engine.GetEntity(box, slot);
-        return pk.Species == 0 ? [] : Enumerable.Range(0, 4).Select(ups => pk.GetMovePP((ushort)move, ups)).ToArray();
+        if (!OriginHeartGoldMoveData.TryGet(move, out var originMove) ||
+            originMove.BasePp <= 0)
+            return [];
+
+        return Enumerable.Range(0, 4)
+            .Select(ups =>
+                OriginHeartGoldMoveData.GetMaxPP(move, ups))
+            .ToArray();
     }
+
+    if (session is not SaveEngineSession engine || move <= 0)
+        return [];
+
+    var pk = engine.GetEntity(box, slot);
+
+    return pk.Species == 0
+        ? []
+        : Enumerable.Range(0, 4)
+            .Select(ups => pk.GetMovePP((ushort)move, ups))
+            .ToArray();
+}
+
 
     public IReadOnlyList<AbilityChoice> GetAbilityChoices(ISaveEngineSession session, int species, int form)
     {

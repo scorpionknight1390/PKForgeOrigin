@@ -249,8 +249,9 @@ public partial class BoxBrowserViewModel : ObservableObject, IBoxPager
             var candidate = engineSession.Serialize();
 
             Status = "Validating, backing up, writing…";
-            var receipt = await _writer.WriteScopedAsync(session.Document.DocumentId, session.Snapshot, candidate,
+            var receipt = await _writer.WriteAuthorizedScopedAsync(session.Document.DocumentId, session.Snapshot, candidate,
                 WriteScope.Only(new SlotRef(detail.Box, detail.Slot)),
+                SaveAction.EditMon,
                 $"Edit {EditorSubject(detail)} ({SlotLabel(detail.Box, detail.Slot)})");
             if (receipt.Changed)
             {
@@ -468,7 +469,8 @@ public partial class BoxBrowserViewModel : ObservableObject, IBoxPager
             SaveWriteReceipt receipt;
             try
             {
-                receipt = await _writer.WriteAsync(session.Document.DocumentId, session.Snapshot, candidate,
+                receipt = await _writer.WriteAuthorizedAsync(session.Document.DocumentId, session.Snapshot, candidate,
+                    action,
                     changeDescription ?? outcome.Message);
             }
             catch (UnsafeSaveWriteException refused) when (refused.RequiresConfirmation && ConfirmHackRisk is { } confirm)
@@ -477,7 +479,8 @@ public partial class BoxBrowserViewModel : ObservableObject, IBoxPager
                 // player takes the risk. The restore point is still made before writing.
                 if (!await confirm(refused.Message)) throw;
                 AcceptHackRisk();
-                receipt = await _writer.WriteAsync(session.Document.DocumentId, session.Snapshot, candidate,
+                receipt = await _writer.WriteAuthorizedAsync(session.Document.DocumentId, session.Snapshot, candidate,
+                    action,
                     changeDescription ?? outcome.Message);
             }
             if (receipt.Changed)
@@ -509,7 +512,17 @@ public partial class BoxBrowserViewModel : ObservableObject, IBoxPager
         }
         catch (Exception error)
         {
+            var keepBox = BoxIndex;
+            var keepSlot = SelectedSlot >= 0 ? SelectedSlot : slot;
+
             DiscardPartialEdits();
+
+            if (_sessions.Current is not null && keepSlot >= 0)
+            {
+                BoxIndex = keepBox;
+                SelectSlot(keepSlot);
+            }
+
             AppLog.Error("edit", $"Edit aborted ({action})", error);
             Status = $"Aborted: {error.Message}";
             return false;

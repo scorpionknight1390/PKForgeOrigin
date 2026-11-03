@@ -92,8 +92,8 @@ internal static class WriteSafety
     public static LayoutRisk? AssessLayoutRisk(ReadOnlyMemory<byte> bytes)
     {
         if (OriginHeartGoldDetector.IsOriginHeartGold(RetroArchSaveContainer.Decode(bytes.Span)))
-        return new LayoutRisk(LayoutRiskKind.CorruptingLayout,
-            "Origin HeartGold uses an expanded save layout (24 boxes, larger blocks) that PKForge can read but cannot write yet.");
+            return new LayoutRisk(LayoutRiskKind.PartiallySupported,
+                "Origin HeartGold has partial support: only explicitly validated Pokémon, inventory, trainer and Pokédex edits are supported. Other write operations remain blocked.");
             
         Parsed? parsed;
         try { parsed = Parse(bytes); }
@@ -168,8 +168,35 @@ internal static class WriteSafety
         return null;
     }
 
-    public static string? CheckWriteSafety(ReadOnlyMemory<byte> original, ReadOnlyMemory<byte> candidate, WriteScope? scope)
+    public static string? CheckWriteSafety(
+        ReadOnlyMemory<byte> original,
+        ReadOnlyMemory<byte> candidate,
+        WriteScope? scope) =>
+        CheckWriteSafety(original, candidate, scope, action: null);
+
+    public static string? CheckWriteSafety(
+        ReadOnlyMemory<byte> original,
+        ReadOnlyMemory<byte> candidate,
+        WriteScope? scope,
+        SaveAction? action)
     {
+        bool originalIsOrigin = OriginHeartGoldDetector.IsOriginHeartGold(
+            RetroArchSaveContainer.Decode(original.Span));
+
+        bool candidateIsOrigin = OriginHeartGoldDetector.IsOriginHeartGold(
+            RetroArchSaveContainer.Decode(candidate.Span));
+
+        if (originalIsOrigin || candidateIsOrigin)
+        {
+            if (!originalIsOrigin)
+                return "The candidate changes a non-Origin save into an Origin HeartGold save.";
+
+            if (!candidateIsOrigin)
+                return "The candidate is no longer recognized as an Origin HeartGold save.";
+
+            return OriginHeartGoldWriteSafety.Check(original, candidate, scope, action);
+        }
+
         Parsed? before, after;
         try
         {

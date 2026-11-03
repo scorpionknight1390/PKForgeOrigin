@@ -47,27 +47,49 @@ public sealed class SafeSaveWriter(
 
     /// <summary>The refusal every non-restore write of this document would hit before any
     /// slot is compared, or null when the save accepts writes.</summary>
-    private UnsafeSaveWriteException? Refusal(string documentId, SaveSnapshot original)
+    private UnsafeSaveWriteException? Refusal(
+        string documentId,
+        SaveSnapshot original,
+        SaveAction? action = null)
     {
         // "Other CFRU hack" borrows the Radical Red / Unbound engine to READ the shared
-        // CFRU layout, but species, growth-rate, base-stat, item and bag tables are
-        // per-hack: a level edit would compute EXP and stats from the wrong game's
-        // tables (the level-100 class of corruption). Read-only until an engine exists.
+        // CFRU layout, but its game-specific Pokémon tables are not available.
         if (identities?.Get(documentId)?.GameChoiceId is "hack-cfru" or "hack-cfru-unbound")
             return new UnsafeSaveWriteException(
                 "Write refused: this save is marked as a CFRU hack PKForge has no engine for. It can be browsed, " +
                 "but writing would use another game's Pokémon tables. The original was not touched.");
 
-        return LayoutRisk(documentId, original.OriginalBytes) switch
+        var risk = LayoutRisk(documentId, original.OriginalBytes);
+
+        if (risk is null)
+            return null;
+
+        // A vanilla write provably breaks the file: no confirmation can make it safe.
+        if (risk.Kind == LayoutRiskKind.CorruptingLayout)
+            return new UnsafeSaveWriteException(
+                $"Write refused: {risk.Reason} This save is read-only in PKForge; the original was not touched.");
+
+        if (risk.Kind == LayoutRiskKind.PartiallySupported)
         {
-            // A vanilla write provably breaks the file: no confirmation can make it safe.
-            { Kind: LayoutRiskKind.CorruptingLayout } risk => new UnsafeSaveWriteException(
-                $"Write refused: {risk.Reason} This save is read-only in PKForge; the original was not touched."),
-            { Kind: LayoutRiskKind.SuspectedHack } risk when !Accepted(documentId) => new UnsafeSaveWriteException(
+            bool supportedAction = action is
+                SaveAction.EditMon or
+                SaveAction.EditInventory or
+                SaveAction.EditTrainer or
+                SaveAction.EditDex;
+
+            if (supportedAction)
+                return null;
+
+            return new UnsafeSaveWriteException(
+                $"Write refused: {risk.Reason} This operation is not authorized for this save. The original was not touched.");
+        }
+
+        if (risk.Kind == LayoutRiskKind.SuspectedHack && !Accepted(documentId))
+            return new UnsafeSaveWriteException(
                 $"Read-only: {risk.Reason} To edit anyway, choose \"Edit at my own risk\" when PKForge asks, or long-press this save on Home. " +
-                "The original was not touched.", requiresConfirmation: true),
-            _ => null,
-        };
+                "The original was not touched.", requiresConfirmation: true);
+
+        return null;
     }
 
     private LayoutRisk? LayoutRisk(string documentId, ReadOnlyMemory<byte> bytes)
@@ -117,6 +139,44 @@ public sealed class SafeSaveWriter(
         cancellationToken: cancellationToken);
     }
 
+    public ValueTask<SaveWriteReceipt> WriteAuthorizedAsync(
+        string documentId,
+        SaveSnapshot original,
+        ReadOnlyMemory<byte> candidate,
+        SaveAction action,
+        string? changeDescription = null,
+        CancellationToken cancellationToken = default)
+        => WriteCoreAsync(
+            documentId,
+            original,
+            candidate,
+            scope: null,
+            isRestore: false,
+            changeDescription: changeDescription,
+            cancellationToken: cancellationToken,
+            action: action);
+
+    public ValueTask<SaveWriteReceipt> WriteAuthorizedScopedAsync(
+        string documentId,
+        SaveSnapshot original,
+        ReadOnlyMemory<byte> candidate,
+        WriteScope scope,
+        SaveAction action,
+        string? changeDescription = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(scope);
+
+        return WriteCoreAsync(
+            documentId,
+            original,
+            candidate,
+            scope,
+            isRestore: false,
+            changeDescription: changeDescription,
+            cancellationToken: cancellationToken,
+            action: action);
+    }
     public ValueTask<SaveWriteReceipt> RestoreAsync(
     string documentId,
     SaveSnapshot original,
@@ -139,7 +199,8 @@ public sealed class SafeSaveWriter(
     WriteScope? scope,
     bool isRestore,
     string? changeDescription,
-    CancellationToken cancellationToken)
+    CancellationToken cancellationToken,
+    SaveAction? action = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
         ArgumentNullException.ThrowIfNull(original);
@@ -165,10 +226,15 @@ public sealed class SafeSaveWriter(
         // the game does not use) or when the diff touches slots the mutation did not target.
         if (!isRestore)
         {
-            if (Refusal(documentId, original) is { } refusal)
+            if (Refusal(documentId, original, action) is { } refusal)
                 throw refusal;
 
-            if (engine.CheckWriteSafety(original.OriginalBytes, candidate, scope) is { } unsafeDiff)
+            string? unsafeDiff = action is { } authorizedAction
+                ? engine.CheckAuthorizedWriteSafety(
+                    original.OriginalBytes, candidate, scope, authorizedAction)
+                : engine.CheckWriteSafety(original.OriginalBytes, candidate, scope);
+
+            if (unsafeDiff is not null)
                 throw new UnsafeSaveWriteException(
                     $"Write refused: {unsafeDiff} The original was not touched.");
         }

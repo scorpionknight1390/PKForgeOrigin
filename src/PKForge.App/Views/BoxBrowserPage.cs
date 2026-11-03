@@ -407,6 +407,7 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
     private string? LayoutMarker => _layoutRisk switch
     {
         LayoutRiskKind.SuspectedHack => _viewModel.OpenSaveIsReadOnly ? RomHackNotice.ReadOnlyStatus : RomHackNotice.Marker,
+        LayoutRiskKind.PartiallySupported => "PARTIAL SUPPORT · only validated editing operations are available",
         LayoutRiskKind.CorruptingLayout => "READ-ONLY · this save's layout is not supported",
         _ => null,
     };
@@ -443,6 +444,11 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
                     new PadOption(RomHackNotice.EditOption, Glyph: "!", Accent: UiTokens.Bad,
                         Detail: "Restore points are still made. Change this later from Home."));
                 if (choice == RomHackNotice.EditOption) _viewModel.AcceptHackRisk();
+                break;
+            case LayoutRiskKind.PartiallySupported:
+                await PadMenu.ShowAsync(_hostGrid, "Origin HeartGold · suporte parcial",
+                    $"{risk.Reason}\nSomente operações com validação específica poderão gravar nesse save. O editor hexadecimal e as demais operações continuam bloqueados.",
+                    "OK");
                 break;
             case LayoutRiskKind.CorruptingLayout when CorruptingExplained.Add(documentId):
                 await PadMenu.ShowAsync(_hostGrid, RomHackNotice.CorruptingTitle,
@@ -2387,6 +2393,7 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
         if (session is null) return;
         var options = Menu(
             new PadOption("Trainer card", IconPath: "trainer"),
+            session.GetTrainerBadges().Supported ? Allowed(SaveAction.EditTrainer, new PadOption("Trainer badges", IconPath: "trainer", Detail: "Edit the 16 Kanto and Johto gym badges.")) : null,
             new PadOption("Bag & items", IconPath: "bag"),
             new PadOption("Pokédex", IconPath: "pokedex"),
             Allowed(SaveAction.EditTrainer, new("Fashion", IconPath: "box", Detail: "Unlock every outfit this save can legally own (X, Y, Sword and Shield).")),
@@ -2408,6 +2415,7 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
         switch (choice)
         {
             case "Trainer card": await ShowTrainerCardAsync(); return;
+            case "Trainer badges": await ShowTrainerBadgesAsync(); return;
             case "Export modified save": await ExportModifiedSaveAsync(session); return;
             case "Close save": await Navigation.PopAsync(); return;
             case "Bag & items": await ShowBagAsync(); return;
@@ -2522,6 +2530,34 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
     }
 
     /// <summary>Trainer card: view + edit name, IDs, money, gender - written safely like everything; view only in Hardcore.</summary>
+    private async Task ShowTrainerBadgesAsync()
+    {
+        if (Denied(SaveAction.EditTrainer)) return;
+
+        var session = _sessionsFor();
+        if (session is null) return;
+
+        await TrainerBadgesEditor.ShowAsync(_hostGrid, session, async (badgeId, earned) =>
+        {
+            var badge = session.GetTrainerBadges().Badges
+                .FirstOrDefault(item => item.Id == badgeId);
+
+            if (badge is null)
+                return false;
+
+            return await _viewModel.RunMutationAsync(s =>
+            {
+                s.SetTrainerBadge(badgeId, earned);
+
+                return new GenerationOutcome(
+                    true,
+                    $"{badge.Name} Badge {(earned ? "earned" : "removed")}.");
+            },
+            Math.Max(0, _viewModel.SelectedSlot),
+            refreshSlot: false,
+            action: SaveAction.EditTrainer);
+        });
+    }
     private async Task ShowTrainerCardAsync()
     {
         var session = _sessionsFor();
@@ -5312,7 +5348,7 @@ public sealed partial class BoxBrowserPage : ContentPage, IPadPagingHandler, IPa
     {
         public object Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
         {
-            if (value is string text && int.TryParse(text, out var id) && id >= 0 && id < names.Count && names[id].Length > 0)
+            if (value is string text && int.TryParse(text, out var id) && id >= 0 && id < names.Count && !string.IsNullOrEmpty(names[id]))
                 return names[id];
             return value as string ?? "";
         }

@@ -43,13 +43,32 @@ public static class InfoPickers
             return await PickerMenu.ShowAsync(host, title, plain, current);
         }
 
-        var hasLearnData = choices.Any(c => c.Learn.IsLegal);
-        var byId = choices.ToDictionary(c => c.Id);
-        var items = new List<PickItem>(choices.Count + 1);
-        if (includeNone) items.Add(new PickItem(0, "(none)"));
-        foreach (var move in MoveChoiceOrder.Sort(choices.Where(c => (uint)c.Id < (uint)data.MoveNames.Count && data.MoveNames[c.Id].Length > 0),
-                     id => NameOf(data.MoveNames, id)))
-            items.Add(MoveRow(move, NameOf(data.MoveNames, move.Id), hasLearnData));
+        string MoveDisplayName(int id)
+{
+    if (session is not null &&
+        Info?.GetMoveName(session, id) is { Length: > 0 } gameName)
+        return gameName;
+
+    return NameOf(data.MoveNames, id);
+}
+
+var hasLearnData = choices.Any(c => c.Learn.IsLegal);
+var byId = choices.ToDictionary(c => c.Id);
+var items = new List<PickItem>(choices.Count + 1);
+
+if (includeNone)
+    items.Add(new PickItem(0, "(none)"));
+
+// Não limitar pelo tamanho da tabela PKHeX:
+// o Origin possui movimentos com IDs próprios.
+var namedChoices = choices.Where(move =>
+{
+    var name = MoveDisplayName(move.Id);
+    return !string.IsNullOrWhiteSpace(name) && name != $"#{move.Id}";
+});
+
+foreach (var move in MoveChoiceOrder.Sort(namedChoices, MoveDisplayName))
+    items.Add(MoveRow(move, MoveDisplayName(move.Id), hasLearnData));
 
         var filter = hasLearnData
             ? new PickerFilter("Legal", "Show all", item => item.Id == 0 || !item.Muted, StartOn: !Services.HaXMode.IsOn)

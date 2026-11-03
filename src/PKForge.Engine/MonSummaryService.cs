@@ -111,7 +111,7 @@ public sealed class MonSummaryService(IGameDataService data, IMonInfoService inf
             var move = Try(() => info.GetMove(session, id));
             var fact = DexFacts.Move(id);
             var pp = details is not null && i < details.Moves.Count ? details.Moves[i] : null;
-            moves.Add(new SummaryMove(id, Name(data.MoveNames, id),
+            moves.Add(new SummaryMove(id, info.GetMoveName(session, id) ?? Name(data.MoveNames, id),
                 move?.Type ?? fact?.Type ?? 0, move?.Category ?? fact?.Category ?? MoveCategory.Status,
                 move?.Power ?? fact?.Power ?? 0, move?.Accuracy ?? fact?.Accuracy ?? 0,
                 pp?.PP ?? move?.PP ?? 0, pp?.MaxPP ?? move?.PP ?? 0, pp?.PPUps ?? 0,
@@ -124,7 +124,9 @@ public sealed class MonSummaryService(IGameDataService data, IMonInfoService inf
     {
         var details = Try(() => session.GetMoveDetails(box, slot));
         if (details is not { SupportsRelearn: true }) return [];
-        return details.RelearnMoves.Where(m => m > 0).Select(m => Name(data.MoveNames, m)).ToList();
+        return details.RelearnMoves.Where(m => m > 0)
+    .Select(m => info.GetMoveName(session, m) ?? Name(data.MoveNames, m))
+    .ToList();
     }
 
     private static string Name(IReadOnlyList<string> names, int id) =>

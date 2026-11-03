@@ -255,6 +255,312 @@ public sealed class OriginHeartGoldRealSaveTests
         Assert.True(pk.ChecksumValid);
     }
 
+
+[Fact]
+public void Rc5_Box1_OriginSessionReadsMovePPFromOriginCatalog()
+{
+    byte[] data = File.ReadAllBytes(Path.Combine(
+        Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv"));
+
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
+    Assert.NotNull(save);
+
+    var original = new PK4(save!.GetBoxRecord(0, 0).ToArray());
+    Assert.True(original.Valid);
+    Assert.Equal(959, original.Species);
+
+    Assert.True(
+        OriginHeartGoldMoveData.IsAvailable,
+        "O catálogo local de movimentos Origin não foi carregado.");
+
+    using var session = new OriginHeartGoldEngineSession(data, "teste");
+
+    var details = session.GetMoveDetails(0, 0);
+
+    Assert.Equal(4, details.Moves.Count);
+    Assert.False(details.SupportsRelearn);
+
+    ushort[] originalMoves =
+    [
+        original.Move1, original.Move2,
+        original.Move3, original.Move4
+    ];
+
+    int[] originalPP =
+    [
+        original.Move1_PP, original.Move2_PP,
+        original.Move3_PP, original.Move4_PP
+    ];
+
+    int[] originalUps =
+    [
+        original.Move1_PPUps, original.Move2_PPUps,
+        original.Move3_PPUps, original.Move4_PPUps
+    ];
+
+    for (int i = 0; i < 4; i++)
+    {
+        var detail = details.Moves[i];
+
+        Assert.Equal(originalMoves[i], detail.Move);
+
+        if (originalMoves[i] == 0)
+        {
+            Assert.Equal(0, detail.PP);
+            Assert.Equal(0, detail.MaxPP);
+            Assert.Equal(0, detail.PPUps);
+            continue;
+        }
+
+        Assert.True(
+            OriginHeartGoldMoveData.TryGet(originalMoves[i], out var move),
+            $"Movimento {originalMoves[i]} não encontrado no catálogo.");
+
+        Assert.NotNull(move.Name);
+        Assert.True(move.BasePp > 0);
+
+        int expectedUps = Math.Clamp(originalUps[i], 0, 3);
+        int expectedMaxPP =
+            move.BasePp + (move.BasePp * expectedUps / 5);
+
+        Assert.Equal(expectedUps, detail.PPUps);
+        Assert.Equal(expectedMaxPP, detail.MaxPP);
+        Assert.Equal(Math.Clamp(originalPP[i], 0, expectedMaxPP), detail.PP);
+    }
+// O serviço de informações também precisa reconhecer os movimentos Origin.
+var infoService = new MonInfoService();
+
+Assert.True(OriginHeartGoldMoveData.TryGet(893, out var originMove));
+
+var moveInfo = infoService.GetMove(session, 893);
+
+Assert.NotNull(moveInfo);
+Assert.Equal("GigatonHammr", originMove.Name);
+Assert.Equal(originMove.Type, moveInfo!.Type);
+Assert.Equal(originMove.BasePp, moveInfo.PP);
+Assert.Equal(originMove.Power, moveInfo.Power);
+Assert.Equal(originMove.Accuracy, moveInfo.Accuracy);
+
+// Os quatro valores de PP máximo precisam vir do catálogo Origin.
+var expectedThunderclapMaxPP = Enumerable.Range(0, 4)
+    .Select(ups => originMove.BasePp + originMove.BasePp * ups / 5)
+    .ToArray();
+
+Assert.Equal(
+    expectedThunderclapMaxPP,
+    infoService.GetMaxPPByUps(session, 0, 0, 893).ToArray());
+    // Os dois movimentos personalizados do Tinkaton precisam estar disponíveis.
+    Assert.Contains(details.Moves, m => m.Move == 893);
+    Assert.Contains(details.Moves, m => m.Move == 583);
+
+    // A consulta não pode alterar o save original.
+    Assert.True(data.AsSpan().SequenceEqual(session.Snapshot.OriginalBytes.Span));
+    Assert.True(data.AsSpan().SequenceEqual(session.Serialize().Span));
+}
+
+[Fact]
+public void Rc5_OriginMonInfoServiceProvidesCustomMoveNamesAndChoices()
+{
+    byte[] bytes = File.ReadAllBytes(Path.Combine(
+        Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv"));
+
+    using var session = new OriginHeartGoldEngineSession(bytes, "teste");
+    var info = new MonInfoService();
+
+    // Nomes próprios do catálogo Origin.
+    Assert.Equal("GigatonHammr", info.GetMoveName(session, 893));
+    Assert.Equal("Thunderclap", info.GetMoveName(session, 909));
+
+    // O seletor deve receber os 902 movimentos disponíveis.
+    var choices = info.GetMoveChoices(session, 0, 0);
+
+    Assert.Equal(902, choices.Count);
+    Assert.Contains(choices, move => move.Id == 893);
+    Assert.Contains(choices, move => move.Id == 583);
+    Assert.Contains(choices, move => move.Id == 909);
+
+    // Os dados técnicos também devem vir do catálogo Origin.
+    Assert.True(OriginHeartGoldMoveData.TryGet(893, out var reference));
+
+    var selected = Assert.Single(choices, move => move.Id == 893);
+
+    Assert.Equal(reference.BasePp, selected.PP);
+    Assert.Equal(reference.Type, selected.Type);
+    Assert.Equal(reference.Power, selected.Power);
+    Assert.Equal(reference.Accuracy, selected.Accuracy);
+}
+
+[Fact]
+public void Rc5_Box1_OriginSessionReplacesMoveInMemory()
+{
+    byte[] bytes = File.ReadAllBytes(Path.Combine(
+        Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv"));
+
+    byte[] originalCopy = bytes.ToArray();
+
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(bytes, out var originalSave));
+    Assert.NotNull(originalSave);
+
+    var original = new PK4(originalSave!.GetBoxRecord(0, 0).ToArray());
+    Assert.True(original.Valid);
+    Assert.Equal(959, original.Species);
+    Assert.Equal(893, (int)original.Move1);
+
+    using var session = new OriginHeartGoldEngineSession(bytes, "teste");
+
+    var before = session.GetMoveDetails(0, 0);
+
+    // ID 921 não pertence ao catálogo: deve ser recusado sem alterar a sessão.
+    Assert.Throws<NotSupportedException>(() =>
+        session.ApplyEdit(0, 0, new EntityEdit(Move1: 921)));
+
+    Assert.True(originalCopy.AsSpan().SequenceEqual(session.Serialize().Span));
+
+    // Substitui o primeiro golpe por Thunderclap.
+    session.ApplyEdit(0, 0, new EntityEdit(Move1: 909));
+
+    var after = session.GetMoveDetails(0, 0);
+    var replacement = after.Moves[0];
+
+    Assert.Equal(909, replacement.Move);
+    Assert.Equal("Thunderclap", new MonInfoService().GetMoveName(session, 909));
+    Assert.True(OriginHeartGoldMoveData.TryGet(909, out var reference));
+
+    Assert.Equal(0, replacement.PPUps);
+    Assert.Equal(reference.BasePp, replacement.MaxPP);
+    Assert.Equal(reference.BasePp, replacement.PP);
+
+    // Os outros três golpes precisam permanecer intactos.
+    for (int i = 1; i < 4; i++)
+    {
+        Assert.Equal(before.Moves[i].Move, after.Moves[i].Move);
+        Assert.Equal(before.Moves[i].PP, after.Moves[i].PP);
+        Assert.Equal(before.Moves[i].PPUps, after.Moves[i].PPUps);
+    }
+
+    byte[] candidate = session.Serialize().ToArray();
+
+    Assert.False(originalCopy.AsSpan().SequenceEqual(candidate));
+    Assert.True(originalCopy.AsSpan().SequenceEqual(bytes));
+    Assert.True(originalCopy.AsSpan().SequenceEqual(
+        session.Snapshot.OriginalBytes.Span));
+
+    // Reabre o candidato e verifica a integridade do Pokémon.
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(candidate, out var updatedSave));
+    Assert.NotNull(updatedSave);
+
+    var reopened = new PK4(updatedSave!.GetBoxRecord(0, 0).ToArray());
+
+    Assert.True(reopened.Valid);
+    Assert.Equal(original.Species, reopened.Species);
+    Assert.Equal(original.PID, reopened.PID);
+    Assert.Equal((ushort)909, reopened.Move1);
+    Assert.Equal(original.Move2, reopened.Move2);
+    Assert.Equal(original.Move3, reopened.Move3);
+    Assert.Equal(original.Move4, reopened.Move4);
+
+    // Os campos especiais do Origin precisam continuar intactos.
+    Assert.Equal(original.Data[0x15], reopened.Data[0x15]);
+    Assert.Equal(
+        original.Data.Slice(0x42, 2).ToArray(),
+        reopened.Data.Slice(0x42, 2).ToArray());
+}
+
+[Fact]
+public void Rc5_Box1_OriginSessionEditsPPUpsAndPPInMemory()
+{
+    byte[] bytes = File.ReadAllBytes(Path.Combine(
+        Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv"));
+
+    byte[] originalCopy = bytes.ToArray();
+
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(bytes, out var save));
+    Assert.NotNull(save);
+
+    var originalPokemon = new PK4(save!.GetBoxRecord(0, 0).ToArray());
+    Assert.True(originalPokemon.Valid);
+    Assert.Equal(959, originalPokemon.Species);
+
+    using var session = new OriginHeartGoldEngineSession(bytes, "teste");
+
+    var before = session.GetMoveDetails(0, 0);
+
+    int index = Enumerable.Range(0, 4)
+        .First(i => before.Moves[i].Move > 0);
+
+    var selectedMove = before.Moves[index];
+
+    Assert.True(
+        OriginHeartGoldMoveData.TryGet(selectedMove.Move, out var move));
+
+    // Escolhe um valor de PP Ups diferente do atual.
+    int requestedUps = selectedMove.PPUps == 3
+        ? 2
+        : selectedMove.PPUps + 1;
+
+    int[] ups = before.Moves.Select(m => m.PPUps).ToArray();
+    ups[index] = requestedUps;
+
+    session.ApplyMoveDetails(
+        0, 0, new MoveDetailsEdit(PPUps: ups));
+
+    var afterUps = session.GetMoveDetails(0, 0);
+    var updatedMove = afterUps.Moves[index];
+
+    int expectedMaxPP =
+        move.BasePp + (move.BasePp * requestedUps / 5);
+
+    Assert.Equal(requestedUps, updatedMove.PPUps);
+    Assert.Equal(expectedMaxPP, updatedMove.MaxPP);
+
+    // Alterar PP acima do limite deve resultar no máximo permitido.
+    int[] requestedPP = afterUps.Moves.Select(m => m.PP).ToArray();
+    requestedPP[index] = 255;
+
+    session.ApplyMoveDetails(
+        0, 0, new MoveDetailsEdit(PP: requestedPP));
+
+    var afterPP = session.GetMoveDetails(0, 0);
+
+    Assert.Equal(expectedMaxPP, afterPP.Moves[index].PP);
+    Assert.Equal(requestedUps, afterPP.Moves[index].PPUps);
+
+    // A alteração deve existir somente na cópia em memória.
+    byte[] candidate = session.Serialize().ToArray();
+
+    Assert.False(originalCopy.AsSpan().SequenceEqual(candidate));
+    Assert.True(originalCopy.AsSpan().SequenceEqual(bytes));
+    Assert.True(
+        originalCopy.AsSpan().SequenceEqual(session.Snapshot.OriginalBytes.Span));
+
+    Assert.True(OriginHeartGoldReadOnlyReader.TryOpen(
+        candidate, out var updatedSave));
+
+    Assert.NotNull(updatedSave);
+
+    var reopened = new PK4(updatedSave!.GetBoxRecord(0, 0).ToArray());
+
+    Assert.True(reopened.Valid);
+    Assert.Equal(originalPokemon.Species, reopened.Species);
+    Assert.Equal(originalPokemon.PID, reopened.PID);
+
+    Assert.Equal(originalPokemon.Move1, reopened.Move1);
+    Assert.Equal(originalPokemon.Move2, reopened.Move2);
+    Assert.Equal(originalPokemon.Move3, reopened.Move3);
+    Assert.Equal(originalPokemon.Move4, reopened.Move4);
+
+    Assert.Equal(originalPokemon.Data[0x15], reopened.Data[0x15]);
+    Assert.Equal(
+        originalPokemon.Data.Slice(0x42, 2).ToArray(),
+        reopened.Data.Slice(0x42, 2).ToArray());
+
+    Assert.Equal(expectedMaxPP, afterPP.Moves[index].PP);
+}
+
     [Fact]
     public void Rc8_DiagnoseParty()
     {
@@ -517,7 +823,7 @@ public sealed class OriginHeartGoldRealSaveTests
     }
 
     [Fact]
-    public void OriginHeartGold_IsStructurallyValidButRemainsReadOnly()
+    public void OriginHeartGold_IsStructurallyValidWithPartialSupport()
     {
         byte[] bytes = File.ReadAllBytes(Path.Combine(Downloads,
             "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
@@ -525,7 +831,7 @@ public sealed class OriginHeartGoldRealSaveTests
 
         var risk = engine.AssessLayoutRisk(bytes);
         Assert.NotNull(risk);
-        Assert.Equal(LayoutRiskKind.CorruptingLayout, risk!.Kind);
+        Assert.Equal(LayoutRiskKind.PartiallySupported, risk!.Kind);
         Assert.False(risk.UserMayProceed);
 
         // A estrutura é válida, mas isso não autoriza a gravação.
@@ -576,21 +882,129 @@ public sealed class OriginHeartGoldRealSaveTests
     }
 
     [Fact]
-    public void OriginSession_RefusesEveryEditAndNeverChangesBytes()
+    public void OriginSession_AllowsTrainerEditButRejectsUnsupportedAndInvalidEdits()
     {
         byte[] bytes = File.ReadAllBytes(Path.Combine(Downloads,
-            "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
+            "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv"));
+        byte[] originalCopy = bytes.ToArray();
+
         using var session = new OriginHeartGoldEngineSession(bytes, "teste");
 
-        Assert.Throws<NotSupportedException>(() => session.ApplyEdit(-1, 0, new EntityEdit(Nickname: "X")));
-        Assert.Throws<NotSupportedException>(() => session.SetItemCount("Items", 4, 9));
-        Assert.Throws<NotSupportedException>(() => session.SetTrainer(new TrainerInfo("X", 1, 1, 1u, 0)));
+        // Pokémon da equipe ainda não pode ser editado.
+        Assert.Throws<NotSupportedException>(() =>
+            session.ApplyEdit(-1, 0, new EntityEdit(Nickname: "X")));
 
-        Assert.True(session.Serialize().Span.SequenceEqual(bytes));
+        // O item 4 pertence a Poké Balls, não à bolsa Items.
+        Assert.Throws<ArgumentException>(() =>
+            session.SetItemCount("Items", 4, 9));
+
+        // A edição do treinador é suportada em memória.
+        var trainerBefore = session.GetTrainer();
+
+        session.SetTrainer(new TrainerInfo(
+            "X",
+            trainerBefore.TID,
+            trainerBefore.SID,
+            trainerBefore.Money,
+            trainerBefore.Gender));
+
+        Assert.Equal("X", session.GetTrainer().Name);
+
+        byte[] candidate = session.Serialize().ToArray();
+        var engine = new SaveEngine();
+
+        Assert.False(candidate.AsSpan().SequenceEqual(originalCopy));
+        Assert.True(engine.Validate(candidate));
+
+        // A operação identificada como EditTrainer deve passar pelo validador especializado.
+        Assert.Null(engine.CheckAuthorizedWriteSafety(
+            originalCopy,
+            candidate,
+            scope: null,
+            action: SaveAction.EditTrainer));
+
+        Assert.Equal(
+            LayoutRiskKind.PartiallySupported,
+            engine.AssessLayoutRisk(candidate)!.Kind);
+
+        // O array original e o snapshot de referência permanecem intactos.
+        Assert.True(bytes.AsSpan().SequenceEqual(originalCopy));
+        Assert.True(session.Snapshot.OriginalBytes.Span.SequenceEqual(originalCopy));
     }
-
     [Fact]
-    public void SaveEngine_OpensOriginHeartGold_ReadOnly()
+    public void OriginSession_EditsFriendshipInMemoryAndPreservesOriginalBytes()
+    {
+        byte[] bytes = File.ReadAllBytes(Path.Combine(
+            Downloads,
+            "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv"));
+
+        byte[] originalCopy = bytes.ToArray();
+
+        Assert.True(
+            OriginHeartGoldReadOnlyReader.TryOpen(bytes, out var originalSave));
+
+        Assert.NotNull(originalSave);
+        Assert.False(originalSave!.Tied);
+
+        var originalPokemon = new PK4(
+            originalSave.GetBoxRecord(0, 0).ToArray());
+
+        Assert.Equal(959, originalPokemon.Species);
+        Assert.True(originalPokemon.ChecksumValid);
+
+        byte oldFriendship = originalPokemon.CurrentFriendship;
+        byte expectedFriendship = oldFriendship == 255
+            ? (byte)254
+            : (byte)(oldFriendship + 1);
+
+        using var session = new OriginHeartGoldEngineSession(bytes, "teste");
+
+        session.ApplyEdit(0, 0, new EntityEdit(
+            Friendship: expectedFriendship));
+
+        // A sessão precisa mostrar a nova amizade.
+        var updatedDetail = session.ReadEntity(0, 0);
+        Assert.Equal(expectedFriendship, updatedDetail.Friendship);
+
+        // A identidade do Pokémon deve continuar igual.
+        byte[] candidate = session.Serialize().ToArray();
+
+        Assert.False(bytes.AsSpan().SequenceEqual(candidate));
+        Assert.Equal(originalPokemon.PID,
+            new PK4(
+                OriginHeartGoldReadOnlyReader.TryOpen(candidate, out var updatedSave)
+                    ? updatedSave!.GetBoxRecord(0, 0).ToArray()
+                    : throw new InvalidOperationException("O candidato não abriu."))
+            .PID);
+
+        Assert.NotNull(updatedSave);
+        var reopenedPokemon = new PK4(
+            updatedSave!.GetBoxRecord(0, 0).ToArray());
+
+        Assert.Equal(959, reopenedPokemon.Species);
+        Assert.Equal(expectedFriendship, reopenedPokemon.CurrentFriendship);
+        Assert.True(reopenedPokemon.ChecksumValid);
+
+        // Os campos especiais do Origin precisam continuar intactos.
+        Assert.Equal(originalPokemon.Data[0x15], reopenedPokemon.Data[0x15]);
+        Assert.Equal(
+            originalPokemon.Data.Slice(0x42, 2).ToArray(),
+            reopenedPokemon.Data.Slice(0x42, 2).ToArray());
+
+        // Nem o array original nem o Snapshot de referência podem mudar.
+        Assert.True(bytes.AsSpan().SequenceEqual(originalCopy));
+        Assert.True(
+            session.Snapshot.OriginalBytes.Span.SequenceEqual(originalCopy));
+
+        // A estrutura continua válida e as gravações exigem uma operação autorizada.
+        var engine = new SaveEngine();
+        Assert.True(engine.Validate(candidate));
+        Assert.Equal(
+            LayoutRiskKind.PartiallySupported,
+            engine.AssessLayoutRisk(candidate)!.Kind);
+    }
+    [Fact]
+    public void SaveEngine_OpensOriginHeartGoldWithPartialSupport()
     {
         byte[] bytes = File.ReadAllBytes(Path.Combine(Downloads,
             "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv"));
@@ -609,9 +1023,9 @@ public sealed class OriginHeartGoldRealSaveTests
         Assert.NotNull(description);
         Assert.Equal("AAAAAAA", description!.TrainerName);
 
-        // A validação estrutural passa, mas o risco de layout continua barrando a gravação.
+        // A validação estrutural passa, mas o layout exige operações explicitamente autorizadas.
         Assert.True(engine.Validate(bytes));
-        Assert.Equal(LayoutRiskKind.CorruptingLayout, engine.AssessLayoutRisk(bytes)!.Kind);
+        Assert.Equal(LayoutRiskKind.PartiallySupported, engine.AssessLayoutRisk(bytes)!.Kind);
     }
 
     [Fact]
@@ -631,4 +1045,343 @@ public sealed class OriginHeartGoldRealSaveTests
         using var session = engine.OpenSession(bytes, "teste", guess.Format);
         Assert.IsType<OriginHeartGoldEngineSession>(session);
     }
+[Fact]
+public void Rc5_BoxPokemon_PK4RoundTripAndEditPreserveOriginFields()
+{
+    string path = Path.Combine(
+        Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv");
+
+    byte[] file = File.ReadAllBytes(path);
+
+    Assert.True(
+        OriginHeartGoldReadOnlyReader.TryOpen(file, out var save));
+
+    Assert.NotNull(save);
+
+    // Obtém uma cópia do Pokémon da primeira posição da primeira caixa.
+    byte[] original = save!.GetBoxRecord(0, 0).ToArray();
+
+    var pokemon = new PK4(original.ToArray());
+
+    Assert.Equal(959, pokemon.Species);
+    Assert.True(pokemon.ChecksumValid);
+
+    // Guarda os campos especiais utilizados pelo Origin.
+    byte originalAbilitySlot = pokemon.Data[0x15];
+
+    byte[] originalEffectiveAbility =
+        pokemon.Data.Slice(0x42, 2).ToArray();
+
+    // Primeira etapa: descriptografar e criptografar sem editar.
+    byte[] roundTrip = new byte[136];
+
+    pokemon.WriteEncryptedDataStored(roundTrip);
+
+    Assert.True(
+        original.SequenceEqual(roundTrip),
+        "O PK4 modificou bytes mesmo sem nenhuma edição.");
+
+    // Segunda etapa: reabrir e alterar somente a amizade.
+    var editable = new PK4(roundTrip.ToArray());
+
+    byte expectedFriendship =
+        (byte)(editable.OriginalTrainerFriendship ^ 1);
+
+    editable.OriginalTrainerFriendship = expectedFriendship;
+
+    byte[] editedRecord = new byte[136];
+
+    editable.WriteEncryptedDataStored(editedRecord);
+
+    // Terceira etapa: abrir novamente o Pokémon editado.
+    var reopened = new PK4(editedRecord.ToArray());
+
+    Assert.True(reopened.ChecksumValid);
+    Assert.Equal(959, reopened.Species);
+    Assert.Equal(pokemon.PID, reopened.PID);
+
+    Assert.Equal(
+        expectedFriendship,
+        reopened.OriginalTrainerFriendship);
+
+    Assert.Equal(
+        originalAbilitySlot,
+        reopened.Data[0x15]);
+
+    Assert.Equal(
+        originalEffectiveAbility,
+        reopened.Data.Slice(0x42, 2).ToArray());
+}
+[Theory]
+[InlineData("Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv")]
+[InlineData("Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv")]
+public void DiagnoseMirrorStateBeforeBoxEditing(string fileName)
+{
+    byte[] data = File.ReadAllBytes(
+        Path.Combine(Downloads, fileName));
+
+    Assert.True(
+        OriginHeartGoldReadOnlyReader.TryOpen(data, out var save));
+
+    Assert.NotNull(save);
+
+    const int storageBlockSize = 0x18408;
+    const int storageChunkSize = 0x183F4;
+    const int footerSize = 16;
+
+    int storage = save!.StorageOffset;
+
+    ushort storedInnerCrc =
+        BinaryPrimitives.ReadUInt16LittleEndian(
+            data.AsSpan(storage + storageChunkSize, 2));
+
+    ushort calculatedInnerCrc =
+        CalculateCrc16Ccitt(
+            data.AsSpan(storage, storageChunkSize));
+
+    int footer = storage + storageBlockSize - footerSize;
+
+    ushort storedOuterCrc =
+        BinaryPrimitives.ReadUInt16LittleEndian(
+            data.AsSpan(footer + 14, 2));
+
+    ushort calculatedOuterCrc =
+        CalculateCrc16Ccitt(
+            data.AsSpan(storage, storageBlockSize - footerSize));
+
+    _output.WriteLine($"Arquivo: {fileName}");
+    _output.WriteLine($"Tied: {save.Tied}");
+    _output.WriteLine($"GeneralOffset: 0x{save.GeneralOffset:X}");
+    _output.WriteLine($"StorageOffset: 0x{storage:X}");
+    _output.WriteLine($"Counter: {save.Counter}");
+    _output.WriteLine(
+        $"CRC interno: armazenado={storedInnerCrc:X4}, calculado={calculatedInnerCrc:X4}, válido={storedInnerCrc == calculatedInnerCrc}");
+    _output.WriteLine(
+        $"CRC externo: armazenado={storedOuterCrc:X4}, calculado={calculatedOuterCrc:X4}, válido={storedOuterCrc == calculatedOuterCrc}");
+}
+
+private static ushort CalculateCrc16Ccitt(
+    ReadOnlySpan<byte> data)
+{
+    ushort crc = 0xFFFF;
+
+    foreach (byte value in data)
+    {
+        crc ^= (ushort)(value << 8);
+
+        for (int bit = 0; bit < 8; bit++)
+        {
+            crc = (ushort)(
+                ((crc << 1) ^
+                ((crc & 0x8000) != 0 ? 0x1021 : 0))
+                & 0xFFFF);
+        }
+    }
+
+    return crc;
+}
+[Fact]
+public void Rc5_BoxMutation_PreservesOriginalAndChangesOnlyAllowedBytes()
+{
+    string path = Path.Combine(
+        Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv");
+
+    byte[] original = File.ReadAllBytes(path);
+    byte[] originalSnapshot = original.ToArray();
+
+    Assert.True(
+        OriginHeartGoldReadOnlyReader.TryOpen(original, out var save));
+
+    Assert.NotNull(save);
+    Assert.False(save!.Tied);
+
+    byte[] originalRecord = save.GetBoxRecord(0, 0).ToArray();
+
+    var pokemon = new PK4(originalRecord.ToArray());
+
+    Assert.Equal(959, pokemon.Species);
+    Assert.True(pokemon.ChecksumValid);
+
+    byte abilitySlot = pokemon.Data[0x15];
+    byte[] effectiveAbility = pokemon.Data.Slice(0x42, 2).ToArray();
+
+    byte expectedFriendship =
+        (byte)(pokemon.OriginalTrainerFriendship ^ 1);
+
+    pokemon.OriginalTrainerFriendship = expectedFriendship;
+
+    byte[] editedRecord = new byte[136];
+    pokemon.WriteEncryptedDataStored(editedRecord);
+
+    Assert.True(
+        OriginHeartGoldBoxMutation.TryCreateCandidate(
+            original,
+            0,
+            0,
+            editedRecord,
+            out byte[] candidate),
+        "O gravador experimental recusou o registro.");
+
+    Assert.NotEmpty(candidate);
+    Assert.False(original.AsSpan().SequenceEqual(candidate));
+
+    // O arquivo original continua intacto em memória.
+    Assert.True(original.AsSpan().SequenceEqual(originalSnapshot));
+
+    Assert.True(
+        OriginHeartGoldReadOnlyReader.TryOpen(candidate, out var updated));
+
+    Assert.NotNull(updated);
+    Assert.False(updated!.Tied);
+    Assert.Equal(save.GeneralOffset, updated.GeneralOffset);
+    Assert.Equal(save.StorageOffset, updated.StorageOffset);
+    Assert.Equal(save.Counter, updated.Counter);
+
+    var reopened = new PK4(
+        updated.GetBoxRecord(0, 0).ToArray());
+
+    Assert.Equal(959, reopened.Species);
+    Assert.True(reopened.ChecksumValid);
+    Assert.Equal(expectedFriendship, reopened.OriginalTrainerFriendship);
+
+    Assert.Equal(abilitySlot, reopened.Data[0x15]);
+    Assert.Equal(
+        effectiveAbility,
+        reopened.Data.Slice(0x42, 2).ToArray());
+
+    const int storageSize = 0x18408;
+    const int storageChunkSize = 0x183F4;
+    const int footerSize = 16;
+
+    int storage = save.StorageOffset;
+
+    // O CRC interno inválido original do rc5 deve ser preservado.
+    ushort oldInner = BinaryPrimitives.ReadUInt16LittleEndian(
+        original.AsSpan(storage + storageChunkSize, 2));
+
+    ushort newInner = BinaryPrimitives.ReadUInt16LittleEndian(
+        candidate.AsSpan(storage + storageChunkSize, 2));
+
+    Assert.Equal(oldInner, newInner);
+
+    // O CRC externo precisa continuar válido após a alteração.
+    int footer = storage + storageSize - footerSize;
+
+    ushort storedOuter = BinaryPrimitives.ReadUInt16LittleEndian(
+        candidate.AsSpan(footer + 14, 2));
+
+    ushort calculatedOuter = CalculateCrc16Ccitt(
+        candidate.AsSpan(storage, storageSize - footerSize));
+
+    Assert.Equal(storedOuter, calculatedOuter);
+
+    // O espelho inativo deve permanecer completamente intacto.
+    int inactiveStorage =
+        storage == 0xF800 ? 0x4F800 : 0xF800;
+
+    Assert.True(
+        original.AsSpan(inactiveStorage, storageSize)
+            .SequenceEqual(candidate.AsSpan(inactiveStorage, storageSize)));
+
+    // O footer DeSmuME deve ser idêntico.
+    Assert.True(
+        original.AsSpan(0x80000)
+            .SequenceEqual(candidate.AsSpan(0x80000)));
+
+    // Somente estes intervalos podem sofrer alterações.
+    bool IsAllowedOffset(int offset)
+    {
+        int recordOffset =
+            storage + (0 * 0x1000) + (0 * 136);
+
+        bool record = offset >= recordOffset &&
+                      offset < recordOffset + 136;
+
+        bool modifiedFlag = offset >= storage + 0x18004 &&
+                            offset < storage + 0x18008;
+
+        bool innerChecksum = offset >= storage + storageChunkSize &&
+                             offset < storage + storageChunkSize + 2;
+
+        bool outerChecksum = offset >= footer + 14 &&
+                             offset < footer + 16;
+
+        return record || modifiedFlag || innerChecksum || outerChecksum;
+    }
+
+    for (int i = 0; i < original.Length; i++)
+    {
+        if (!IsAllowedOffset(i))
+            Assert.Equal(original[i], candidate[i]);
+    }
+}
+
+[Fact]
+public void OriginSession_EditsIVsAndEVsInAppOrderAndClampsValues()
+{
+    byte[] bytes = File.ReadAllBytes(Path.Combine(
+        Downloads,
+        "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc5.dsv"));
+
+    byte[] originalCopy = bytes.ToArray();
+
+    Assert.True(
+        OriginHeartGoldReadOnlyReader.TryOpen(bytes, out var originalSave));
+
+    Assert.NotNull(originalSave);
+
+    var originalPokemon = new PK4(
+        originalSave!.GetBoxRecord(0, 0).ToArray());
+
+    Assert.Equal(959, originalPokemon.Species);
+
+    int[] requestedIVs = [-5, 31, 7, 99, 0, 19];
+    int[] expectedIVs = [0, 31, 7, 31, 0, 19];
+
+    int[] requestedEVs = [-1, 300, 123, 1, 254, 17];
+    int[] expectedEVs = [0, 255, 123, 1, 254, 17];
+
+    using var session = new OriginHeartGoldEngineSession(bytes, "teste");
+
+    session.ApplyEdit(0, 0, new EntityEdit(
+        IVs: requestedIVs,
+        EVs: requestedEVs));
+
+    var detail = session.ReadEntity(0, 0);
+
+    Assert.Equal(expectedIVs, detail.IVs.ToArray());
+    Assert.Equal(expectedEVs, detail.EVs.ToArray());
+
+    byte[] candidate = session.Serialize().ToArray();
+
+    Assert.True(
+        OriginHeartGoldReadOnlyReader.TryOpen(candidate, out var updatedSave));
+
+    Assert.NotNull(updatedSave);
+
+    var reopened = new PK4(
+        updatedSave!.GetBoxRecord(0, 0).ToArray());
+
+    Assert.Equal(959, reopened.Species);
+    Assert.Equal(originalPokemon.PID, reopened.PID);
+    Assert.Equal(expectedIVs,
+        new[] { reopened.IV_HP, reopened.IV_ATK, reopened.IV_DEF,
+                reopened.IV_SPA, reopened.IV_SPD, reopened.IV_SPE });
+
+    Assert.Equal(expectedEVs,
+        new[] { reopened.EV_HP, reopened.EV_ATK, reopened.EV_DEF,
+                reopened.EV_SPA, reopened.EV_SPD, reopened.EV_SPE });
+
+    Assert.True(reopened.ChecksumValid);
+
+    Assert.Equal(originalPokemon.Data[0x15], reopened.Data[0x15]);
+    Assert.Equal(
+        originalPokemon.Data.Slice(0x42, 2).ToArray(),
+        reopened.Data.Slice(0x42, 2).ToArray());
+
+    Assert.True(bytes.AsSpan().SequenceEqual(originalCopy));
+    Assert.True(session.Snapshot.OriginalBytes.Span.SequenceEqual(originalCopy));
+}
 }

@@ -56,6 +56,14 @@ public interface ISaveEngine
     /// given) no slot outside the scope changed. Null when safe, otherwise the reason.
     /// </summary>
     string? CheckWriteSafety(ReadOnlyMemory<byte> original, ReadOnlyMemory<byte> candidate, WriteScope? scope) => null;
+
+    /// <summary>Specialized safety check for an explicitly identified editing operation.</summary>
+    string? CheckAuthorizedWriteSafety(
+        ReadOnlyMemory<byte> original,
+        ReadOnlyMemory<byte> candidate,
+        WriteScope? scope,
+        SaveAction action) =>
+        CheckWriteSafety(original, candidate, scope);
 }
 
 /// <summary>How far the engine trusts a save's layout; see <see cref="ISaveEngine.AssessLayoutRisk"/>.</summary>
@@ -69,6 +77,8 @@ public enum LayoutRiskKind
     /// <summary>A vanilla write provably corrupts the file (checksums follow another layout,
     /// or the Pokémon are in a foreign format). Always refused; no confirmation lifts it.</summary>
     CorruptingLayout = 2,
+    /// <summary>Only explicitly validated editing operations are supported for this save layout.</summary>
+    PartiallySupported = 3,
 }
 
 /// <summary>One layout verdict and its human-readable reason.</summary>
@@ -145,6 +155,24 @@ public interface ISafeSaveWriter
     ValueTask<SaveWriteReceipt> WriteScopedAsync(string documentId, SaveSnapshot original, ReadOnlyMemory<byte> candidate, WriteScope scope, string? changeDescription = null, CancellationToken cancellationToken = default)
         => WriteAsync(documentId, original, candidate, changeDescription, cancellationToken);
 
+    /// <summary>Writes with an explicit operation identity for specialized validation.</summary>
+    ValueTask<SaveWriteReceipt> WriteAuthorizedAsync(
+        string documentId,
+        SaveSnapshot original,
+        ReadOnlyMemory<byte> candidate,
+        SaveAction action,
+        string? changeDescription = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>Authorized counterpart of WriteScopedAsync.</summary>
+    ValueTask<SaveWriteReceipt> WriteAuthorizedScopedAsync(
+        string documentId,
+        SaveSnapshot original,
+        ReadOnlyMemory<byte> candidate,
+        WriteScope scope,
+        SaveAction action,
+        string? changeDescription = null,
+        CancellationToken cancellationToken = default);
     /// <summary>Records that the user explicitly accepted writing a save the engine flagged as
     /// a suspected ROM hack (<see cref="LayoutRiskKind.SuspectedHack"/>). A corrupting layout
     /// stays refused regardless.</summary>

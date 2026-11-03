@@ -29,4 +29,8 @@
          game's engine source (github.com/G0LD/GS-Chronicles-Engine, pinned commit in each header). -->
     <EmbeddedResource Include="GsChronicles/Data/*" LogicalName="gschronicles.%(Filename)%(Extension)" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="OriginHeartGold/Data/moves.json" LogicalName="originheartgold.moves.json" />
+    <EmbeddedResource Include="OriginHeartGold/Data/items.json" LogicalName="originheartgold.items.json" />
+  </ItemGroup>
 </Project>

@@ -144,6 +144,13 @@ public sealed class SaveEngine : IFormatAwareSaveEngine
     public string? CheckWriteSafety(ReadOnlyMemory<byte> original, ReadOnlyMemory<byte> candidate, WriteScope? scope) =>
         WriteSafety.CheckWriteSafety(original, candidate, scope);
 
+    public string? CheckAuthorizedWriteSafety(
+        ReadOnlyMemory<byte> original,
+        ReadOnlyMemory<byte> candidate,
+        WriteScope? scope,
+        SaveAction action) =>
+        WriteSafety.CheckWriteSafety(original, candidate, scope, action);
+
     public BankEntryInfo? TryDescribeEntity(byte[] bytes, string sourceName, string? format = null)
     {
         // A CFRU mon is described from its own game's tables: most of its species have no PK3 at all.

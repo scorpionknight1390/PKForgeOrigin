@@ -149,6 +149,11 @@ public interface ISaveEngineSession : IDisposable
     /// <summary>Playtime, Battle Points, and coins with per-field support flags and
     /// storage maxima; the UI only offers what the open format actually keeps.
     /// Money stays on <see cref="TrainerInfo"/>, the identity surface that already writes it.</summary>
+    /// <summary>Trainer badges stored by the open save format. Unsupported formats return Supported=false.</summary>
+    TrainerBadgesInfo GetTrainerBadges() => new(false, [], 0);
+    /// <summary>Changes one trainer badge. Unsupported formats reject the operation.</summary>
+    void SetTrainerBadge(int badgeId, bool earned) =>
+        throw new NotSupportedException("Trainer badges are not editable for this save format.");
     TrainerStats GetTrainerStats();
     /// <summary>Partial mutation: only non-null fields apply, each clamped to the
     /// format's storage maximum. Unsupported fields are ignored.</summary>
@@ -594,6 +599,10 @@ public sealed record BaseStats(int Hp, int Atk, int Def, int SpA, int SpD, int S
 public sealed record SlotExport(byte[] Data, string FileName, string? Format = null);
 
 public sealed record TrainerInfo(string Name, int TID, int SID, uint Money, int Gender);
+
+public sealed record TrainerBadge(int Id, string Name, string Region, bool Earned);
+
+public sealed record TrainerBadgesInfo(bool Supported, IReadOnlyList<TrainerBadge> Badges, int EarnedCount);
 
 /// <summary>A reusable ownership identity. DisplayName labels the preset and is never written into a save.</summary>
 public sealed record TrainerProfile(string Id, string DisplayName, string OriginalTrainer, int TID, int SID, int Gender);
