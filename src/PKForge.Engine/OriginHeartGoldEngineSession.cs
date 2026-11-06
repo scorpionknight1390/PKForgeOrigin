@@ -1153,158 +1153,176 @@ private void ApplyGeneralEdit(
     public void ApplyMetEdit(int box, int slot, MetEdit edit) => throw NotYet("editar origem");
     public void ApplyPotentialEdit(int box, int slot, PotentialEdit edit) => throw NotYet("editar potencial");
 
-public void ApplyMoveDetails(int box, int slot, MoveDetailsEdit edit)
-{
-    ArgumentNullException.ThrowIfNull(edit);
-
-    // Nesta primeira versão, a edição fica restrita aos Pokémon das caixas.
-    if (box == -1)
-        throw NotYet("editar golpes do time");
-
-    if ((uint)box >= OriginHeartGoldReadOnlySave.BoxCount)
-        throw new ArgumentOutOfRangeException(nameof(box));
-
-    if ((uint)slot >= OriginHeartGoldReadOnlySave.BoxSlotCount)
-        throw new ArgumentOutOfRangeException(nameof(slot));
-
-    if (edit.RelearnMoves is not null)
-        throw NotYet("editar movimentos de relembre");
-
-    if (edit.PP is { } requestedPP && requestedPP.Count != 4)
-        throw new ArgumentException("PP deve conter exatamente quatro posições.", nameof(edit));
-
-    if (edit.PPUps is { } requestedUps && requestedUps.Count != 4)
-        throw new ArgumentException("PP Ups deve conter exatamente quatro posições.", nameof(edit));
-
-    if (edit.PP is null && edit.PPUps is null)
-        return;
-
-    byte[] originalRecord = _save.GetBoxRecord(box, slot).ToArray();
-    var pokemon = new PK4(originalRecord);
-
-    if (!pokemon.Valid || pokemon.Species == 0)
-        throw new InvalidOperationException(
-            "Não é possível editar os golpes de um espaço vazio ou com checksum inválido.");
-
-    ushort[] moves =
-    [
-        pokemon.Move1,
-        pokemon.Move2,
-        pokemon.Move3,
-        pokemon.Move4
-    ];
-
-    int[] originalPP =
-    [
-        pokemon.Move1_PP,
-        pokemon.Move2_PP,
-        pokemon.Move3_PP,
-        pokemon.Move4_PP
-    ];
-
-    int[] originalUps =
-    [
-        pokemon.Move1_PPUps,
-        pokemon.Move2_PPUps,
-        pokemon.Move3_PPUps,
-        pokemon.Move4_PPUps
-    ];
-
-    int[] pp = originalPP.ToArray();
-    int[] ups = originalUps.Select(value => Math.Clamp(value, 0, 3)).ToArray();
-
-    // Alterar PP Ups restaura o PP ao máximo somente dos golpes alterados.
-    if (edit.PPUps is { } newUps)
+    public void ApplyMoveDetails(int box, int slot, MoveDetailsEdit edit)
     {
+        ArgumentNullException.ThrowIfNull(edit);
+
+        bool isParty = box == -1;
+
+        if (isParty)
+        {
+            if ((uint)slot >= (uint)_save.PartyCount)
+                throw new ArgumentOutOfRangeException(nameof(slot));
+        }
+        else
+        {
+            if ((uint)box >= OriginHeartGoldReadOnlySave.BoxCount)
+                throw new ArgumentOutOfRangeException(nameof(box));
+
+            if ((uint)slot >= OriginHeartGoldReadOnlySave.BoxSlotCount)
+                throw new ArgumentOutOfRangeException(nameof(slot));
+        }
+
+        if (edit.RelearnMoves is not null)
+            throw NotYet("editar movimentos de relembre");
+
+        if (edit.PP is { } requestedPP && requestedPP.Count != 4)
+            throw new ArgumentException("PP deve conter exatamente quatro posições.", nameof(edit));
+
+        if (edit.PPUps is { } requestedUps && requestedUps.Count != 4)
+            throw new ArgumentException("PP Ups deve conter exatamente quatro posições.", nameof(edit));
+
+        if (edit.PP is null && edit.PPUps is null)
+            return;
+
+        byte[] originalRecord = isParty
+            ? _save.GetPartyPokemonBytes(slot).ToArray()
+            : _save.GetBoxRecord(box, slot).ToArray();
+
+        var pokemon = new PK4(originalRecord);
+
+        if (!pokemon.Valid || pokemon.Species == 0)
+            throw new InvalidOperationException(
+                "Não é possível editar os golpes de um espaço vazio ou com checksum inválido.");
+
+        ushort[] moves =
+        [
+            pokemon.Move1,
+            pokemon.Move2,
+            pokemon.Move3,
+            pokemon.Move4
+        ];
+
+        int[] originalPP =
+        [
+            pokemon.Move1_PP,
+            pokemon.Move2_PP,
+            pokemon.Move3_PP,
+            pokemon.Move4_PP
+        ];
+
+        int[] originalUps =
+        [
+            pokemon.Move1_PPUps,
+            pokemon.Move2_PPUps,
+            pokemon.Move3_PPUps,
+            pokemon.Move4_PPUps
+        ];
+
+        int[] pp = originalPP.ToArray();
+        int[] ups = originalUps.Select(value => Math.Clamp(value, 0, 3)).ToArray();
+
+        if (edit.PPUps is { } newUps)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                if (moves[i] == 0)
+                {
+                    ups[i] = 0;
+                    pp[i] = 0;
+                    continue;
+                }
+
+                int value = Math.Clamp(newUps[i], 0, 3);
+
+                if (value != ups[i])
+                {
+                    ups[i] = value;
+                    pp[i] = OriginHeartGoldMoveData.GetMaxPP(moves[i], value);
+                }
+            }
+        }
+
+        if (edit.PP is { } newPP)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                if (moves[i] == 0)
+                {
+                    pp[i] = 0;
+                    ups[i] = 0;
+                    continue;
+                }
+
+                int maximum = OriginHeartGoldMoveData.GetMaxPP(moves[i], ups[i]);
+                pp[i] = Math.Clamp(newPP[i], 0, maximum);
+            }
+        }
+
+        bool changed = false;
+
         for (int i = 0; i < 4; i++)
         {
-            if (moves[i] == 0)
+            if (pp[i] != originalPP[i] || ups[i] != originalUps[i])
             {
-                ups[i] = 0;
-                pp[i] = 0;
-                continue;
-            }
-
-            int value = Math.Clamp(newUps[i], 0, 3);
-
-            if (value != ups[i])
-            {
-                ups[i] = value;
-                pp[i] = OriginHeartGoldMoveData.GetMaxPP(moves[i], value);
+                changed = true;
+                break;
             }
         }
-    }
 
-    // Alterar PP respeita o máximo permitido pelos PP Ups atuais.
-    if (edit.PP is { } newPP)
-    {
-        for (int i = 0; i < 4; i++)
+        if (!changed)
+            return;
+
+        pokemon.Move1_PPUps = ups[0];
+        pokemon.Move2_PPUps = ups[1];
+        pokemon.Move3_PPUps = ups[2];
+        pokemon.Move4_PPUps = ups[3];
+
+        pokemon.Move1_PP = pp[0];
+        pokemon.Move2_PP = pp[1];
+        pokemon.Move3_PP = pp[2];
+        pokemon.Move4_PP = pp[3];
+
+        byte[] editedRecord = new byte[OriginHeartGoldReadOnlySave.BoxedSize];
+        pokemon.WriteEncryptedDataStored(editedRecord);
+
+        byte[] candidate;
+        bool candidateCreated;
+
+        if (isParty)
         {
-            if (moves[i] == 0)
-            {
-                pp[i] = 0;
-                ups[i] = 0;
-                continue;
-            }
-
-            int maximum = OriginHeartGoldMoveData.GetMaxPP(moves[i], ups[i]);
-            pp[i] = Math.Clamp(newPP[i], 0, maximum);
+            candidateCreated = OriginHeartGoldPartyMutation.TryCreateCandidate(
+                _workingBytes,
+                slot,
+                editedRecord,
+                out candidate);
         }
-    }
-
-    bool changed = false;
-
-    for (int i = 0; i < 4; i++)
-    {
-        if (pp[i] != originalPP[i] || ups[i] != originalUps[i])
+        else
         {
-            changed = true;
-            break;
+            candidateCreated = OriginHeartGoldBoxMutation.TryCreateCandidate(
+                _workingBytes,
+                box,
+                slot,
+                editedRecord,
+                out candidate);
         }
+
+        if (!candidateCreated)
+        {
+            throw new InvalidDataException(
+                "A alteração dos PP não passou pelas verificações de segurança do Origin HeartGold.");
+        }
+
+        if (!OriginHeartGoldReadOnlyReader.TryOpen(candidate, out var updatedSave) ||
+            updatedSave is null)
+        {
+            throw new InvalidDataException(
+                "Não foi possível reabrir o save Origin HeartGold após a alteração dos PP.");
+        }
+
+        _workingBytes = candidate;
+        _save = updatedSave;
     }
-
-    if (!changed)
-        return;
-
-    // Atualiza os valores no objeto PK4.
-    pokemon.Move1_PPUps = ups[0];
-    pokemon.Move2_PPUps = ups[1];
-    pokemon.Move3_PPUps = ups[2];
-    pokemon.Move4_PPUps = ups[3];
-
-    pokemon.Move1_PP = pp[0];
-    pokemon.Move2_PP = pp[1];
-    pokemon.Move3_PP = pp[2];
-    pokemon.Move4_PP = pp[3];
-
-    // Recria o registro criptografado de 136 bytes.
-    byte[] editedRecord = new byte[OriginHeartGoldReadOnlySave.BoxedSize];
-    pokemon.WriteEncryptedDataStored(editedRecord);
-
-    // Valida a alteração na cópia do save.
-    if (!OriginHeartGoldBoxMutation.TryCreateCandidate(
-            _workingBytes,
-            box,
-            slot,
-            editedRecord,
-            out byte[] candidate))
-    {
-        throw new InvalidDataException(
-            "A alteração dos PP não passou pelas verificações de segurança do Origin HeartGold.");
-    }
-
-    // Reabre o save antes de atualizar a sessão.
-    if (!OriginHeartGoldReadOnlyReader.TryOpen(candidate, out var updatedSave) ||
-        updatedSave is null)
-    {
-        throw new InvalidDataException(
-            "Não foi possível reabrir o save Origin HeartGold após a alteração dos PP.");
-    }
-
-    // Aceita a alteração somente na cópia em memória.
-    _workingBytes = candidate;
-    _save = updatedSave;
-}
 
     public void ApplyMoveShopEdit(int box, int slot, MoveShopEdit edit) => throw NotYet("editar loja de golpes");
     public void ApplyCosmeticEdit(int box, int slot, CosmeticEdit edit) => throw NotYet("editar cosméticos");

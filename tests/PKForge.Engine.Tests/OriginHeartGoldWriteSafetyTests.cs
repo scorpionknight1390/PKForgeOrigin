@@ -791,7 +791,363 @@ public sealed class OriginHeartGoldWriteSafetyTests
             Directory.Delete(tempRoot, recursive: true);
         }
     }
+[Fact]
+public async Task Rc8_AuthorizedInventoryEditWritesToDiskAndReopensWithBagChanges()
+{
+    const string saveName = "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv";
 
+    byte[] original = Load(saveName);
+    byte[] originalBefore = original.ToArray();
+
+    string tempRoot = Path.Combine(
+        Path.GetTempPath(),
+        $"PKForge-OriginRC8Inventory-{Guid.NewGuid():N}");
+
+    Directory.CreateDirectory(tempRoot);
+
+    try
+    {
+        string tempSavePath = Path.Combine(tempRoot, "origin-rc8-inventory.dsv");
+        string backupRoot = Path.Combine(tempRoot, "backups");
+
+        await File.WriteAllBytesAsync(tempSavePath, original);
+
+        using var session = new OriginHeartGoldEngineSession(
+            original, "Origin HeartGold RC8 inventory disk test");
+
+        const string pouchName = "Items";
+
+        var existingIds = session.GetBag()
+            .Single(p => p.Name == pouchName)
+            .Items.Select(i => i.Id)
+            .ToHashSet();
+
+        int itemId = session.GetPouchLegalItems(pouchName)
+            .First(id => !existingIds.Contains(id));
+
+        Assert.True(itemId > 0);
+        Assert.Equal(3, session.SetItemCount(pouchName, itemId, 3));
+
+        byte[] candidate = session.Serialize().ToArray();
+
+        var backupService = new FileBackupService(backupRoot);
+        var access = new TemporaryDiskFileAccess();
+        var writer = new SafeSaveWriter(Engine, backupService, access);
+
+        var receipt = await writer.WriteAuthorizedAsync(
+            tempSavePath,
+            Snapshot(original),
+            candidate,
+            SaveAction.EditInventory,
+            "Origin HeartGold RC8 inventory disk persistence test");
+
+        Assert.True(receipt.Changed);
+
+        byte[] diskBytes = (await access.ReadAsync(tempSavePath)).ToArray();
+
+        Assert.Equal(candidate, diskBytes);
+        Assert.True(Engine.Validate(diskBytes));
+
+        var backupInfo = Assert.Single(await backupService.ListAsync());
+
+        byte[] backupBytes =
+            (await backupService.ReadAsync(backupInfo.BackupId)).ToArray();
+
+        Assert.Equal(originalBefore, backupBytes);
+
+        using var reopened = Engine.OpenSession(
+            diskBytes, "Origin HeartGold RC8 inventory disk reopen test");
+
+        var persistedItem = reopened.GetBag()
+            .Single(p => p.Name == pouchName)
+            .Items.Single(i => i.Id == itemId);
+
+        Assert.Equal(3, persistedItem.Count);
+
+        Assert.Equal(originalBefore, original);
+        Assert.Equal(originalBefore, Load(saveName));
+    }
+    finally
+    {
+        Directory.Delete(tempRoot, recursive: true);
+    }
+}
+    private static int FindRc8PartyPikachuSlot(
+        OriginHeartGoldEngineSession session)
+    {
+        for (int slot = 0; slot < 6; slot++)
+        {
+            var pokemon = session.ReadEntity(-1, slot);
+
+            if (!pokemon.IsEmpty && pokemon.Species == 25)
+                return slot;
+        }
+
+        throw new InvalidOperationException(
+            "Pikachu não encontrado na Party do save RC8.");
+    }
+
+    [Fact]
+    public async Task Rc8_AuthorizedPartyPokemonPPEditWritesToDiskAndReopens()
+    {
+        const string saveName =
+            "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv";
+
+        byte[] original = Load(saveName);
+        byte[] originalBefore = original.ToArray();
+
+        string tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            $"PKForge-OriginRC8PartyPP-{Guid.NewGuid():N}");
+
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            string tempSavePath =
+                Path.Combine(tempRoot, "origin-rc8-party-pp.dsv");
+
+            string backupRoot = Path.Combine(tempRoot, "backups");
+
+            await File.WriteAllBytesAsync(tempSavePath, originalBefore);
+
+            using var session = new OriginHeartGoldEngineSession(
+                original, "Origin HeartGold RC8 Party PP test");
+
+            int partySlot = FindRc8PartyPikachuSlot(session);
+
+            var beforeDetails = session.GetMoveDetails(-1, partySlot);
+
+            int moveIndex = Array.FindIndex(
+                beforeDetails.Moves.ToArray(),
+                move => move.Move > 0 && move.MaxPP > 0);
+
+            Assert.InRange(moveIndex, 0, 3);
+
+            var currentMove = beforeDetails.Moves[moveIndex];
+
+            int newPP = currentMove.PP > 0
+                ? currentMove.PP - 1
+                : 1;
+
+            Assert.NotEqual(currentMove.PP, newPP);
+
+            int[] requestedPP =
+                beforeDetails.Moves.Select(move => move.PP).ToArray();
+
+            requestedPP[moveIndex] = newPP;
+
+            Assert.True(
+                OriginHeartGoldReadOnlyReader.TryOpen(
+                    originalBefore, out var beforeReader));
+
+            byte[] originalPartyRecord =
+                beforeReader!.GetPartyRecord(partySlot).ToArray();
+
+            session.ApplyMoveDetails(
+                -1,
+                partySlot,
+                new MoveDetailsEdit(PP: requestedPP));
+
+            var afterMove =
+                session.GetMoveDetails(-1, partySlot).Moves[moveIndex];
+
+            Assert.Equal(newPP, afterMove.PP);
+
+            byte[] candidate = session.Serialize().ToArray();
+
+            Assert.False(originalBefore.AsSpan().SequenceEqual(candidate));
+            Assert.True(Engine.Validate(candidate));
+
+            Assert.True(
+                OriginHeartGoldReadOnlyReader.TryOpen(
+                    candidate, out var afterReader));
+
+            byte[] candidatePartyRecord =
+                afterReader!.GetPartyRecord(partySlot).ToArray();
+
+            Assert.Equal(
+                originalPartyRecord.AsSpan(
+                    OriginHeartGoldReadOnlySave.BoxedSize).ToArray(),
+                candidatePartyRecord.AsSpan(
+                    OriginHeartGoldReadOnlySave.BoxedSize).ToArray());
+
+            Assert.Null(Engine.CheckAuthorizedWriteSafety(
+                originalBefore,
+                candidate,
+                WriteScope.Only(new SlotRef(-1, partySlot)),
+                SaveAction.EditMon));
+
+            var backupService = new FileBackupService(backupRoot);
+            var access = new TemporaryDiskFileAccess();
+            var writer = new SafeSaveWriter(
+                Engine, backupService, access);
+
+            var receipt = await writer.WriteAuthorizedScopedAsync(
+                tempSavePath,
+                Snapshot(originalBefore),
+                candidate,
+                WriteScope.Only(new SlotRef(-1, partySlot)),
+                SaveAction.EditMon,
+                "Origin HeartGold RC8 Party PP persistence test");
+
+            Assert.True(receipt.Changed);
+
+            byte[] diskBytes =
+                (await access.ReadAsync(tempSavePath)).ToArray();
+
+            Assert.Equal(candidate, diskBytes);
+            Assert.True(Engine.Validate(diskBytes));
+
+            var backupInfo =
+                Assert.Single(await backupService.ListAsync());
+
+            byte[] backupBytes =
+                (await backupService.ReadAsync(
+                    backupInfo.BackupId)).ToArray();
+
+            Assert.Equal(originalBefore, backupBytes);
+
+            using var reopened = Engine.OpenSession(
+                diskBytes,
+                "Origin HeartGold RC8 Party PP reopen test");
+
+            Assert.Equal(
+                newPP,
+                reopened.GetMoveDetails(-1, partySlot)
+                    .Moves[moveIndex].PP);
+
+            Assert.Equal(originalBefore, original);
+            Assert.Equal(originalBefore, Load(saveName));
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Rc8_AuthorizedPartyPokemonPPUpsEditPassesSafetyAndPreservesPartyCache()
+    {
+        const string saveName =
+            "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv";
+
+        byte[] original = Load(saveName);
+        byte[] originalBefore = original.ToArray();
+
+        using var session = new OriginHeartGoldEngineSession(
+            original, "Origin HeartGold RC8 Party PP Ups test");
+
+        int partySlot = FindRc8PartyPikachuSlot(session);
+
+        var beforeDetails = session.GetMoveDetails(-1, partySlot);
+
+        int moveIndex = Array.FindIndex(
+            beforeDetails.Moves.ToArray(),
+            move => move.Move > 0 && move.MaxPP > 0);
+
+        Assert.InRange(moveIndex, 0, 3);
+
+        var currentMove = beforeDetails.Moves[moveIndex];
+
+        int newUps = currentMove.PPUps == 3
+            ? 2
+            : currentMove.PPUps + 1;
+
+        int[] requestedUps =
+            beforeDetails.Moves.Select(move => move.PPUps).ToArray();
+
+        requestedUps[moveIndex] = newUps;
+
+        Assert.True(
+            OriginHeartGoldReadOnlyReader.TryOpen(
+                originalBefore, out var beforeReader));
+
+        byte[] originalPartyRecord =
+            beforeReader!.GetPartyRecord(partySlot).ToArray();
+
+        session.ApplyMoveDetails(
+            -1,
+            partySlot,
+            new MoveDetailsEdit(PPUps: requestedUps));
+
+        var afterMove =
+            session.GetMoveDetails(-1, partySlot).Moves[moveIndex];
+
+        Assert.Equal(newUps, afterMove.PPUps);
+        Assert.Equal(afterMove.MaxPP, afterMove.PP);
+
+        byte[] candidate = session.Serialize().ToArray();
+
+        Assert.True(Engine.Validate(candidate));
+
+        Assert.True(
+            OriginHeartGoldReadOnlyReader.TryOpen(
+                candidate, out var afterReader));
+
+        byte[] candidatePartyRecord =
+            afterReader!.GetPartyRecord(partySlot).ToArray();
+
+        Assert.Equal(
+            originalPartyRecord.AsSpan(
+                OriginHeartGoldReadOnlySave.BoxedSize).ToArray(),
+            candidatePartyRecord.AsSpan(
+                OriginHeartGoldReadOnlySave.BoxedSize).ToArray());
+
+        Assert.Null(Engine.CheckAuthorizedWriteSafety(
+            originalBefore,
+            candidate,
+            WriteScope.Only(new SlotRef(-1, partySlot)),
+            SaveAction.EditMon));
+
+        Assert.Equal(originalBefore, original);
+        Assert.Equal(originalBefore, Load(saveName));
+    }
+
+    [Fact]
+    public void Rc8_PartyCacheByteChangesAreRefused()
+    {
+        const string saveName =
+            "Origin_HeartGold_v4.0.3_EN_v1.0.0-rc8 (1).dsv";
+
+        byte[] original = Load(saveName);
+        byte[] originalBefore = original.ToArray();
+
+        using var session = new OriginHeartGoldEngineSession(
+            original, "Origin HeartGold RC8 Party cache safety test");
+
+        int partySlot = FindRc8PartyPikachuSlot(session);
+
+        const int partyOffset = 0x98;
+
+        int cacheByteOffset =
+            partyOffset +
+            (partySlot * OriginHeartGoldReadOnlySave.PartyRecordSize) +
+            OriginHeartGoldReadOnlySave.BoxedSize;
+
+        Assert.True(OriginHeartGoldGeneralMutation.TryCreateCandidate(
+            originalBefore,
+            general =>
+            {
+                general[cacheByteOffset] ^= 0x01;
+                return true;
+            },
+            out byte[] candidate));
+
+        Assert.True(Engine.Validate(candidate));
+
+        string? refusal = Engine.CheckAuthorizedWriteSafety(
+            originalBefore,
+            candidate,
+            WriteScope.Only(new SlotRef(-1, partySlot)),
+            SaveAction.EditMon);
+
+        Assert.NotNull(refusal);
+        Assert.Contains("cached-stat", refusal);
+
+        Assert.Equal(originalBefore, original);
+        Assert.Equal(originalBefore, Load(saveName));
+    }
     private sealed class TemporaryDiskFileAccess : ISaveFileAccess
     {
         public async ValueTask<ReadOnlyMemory<byte>> ReadAsync(

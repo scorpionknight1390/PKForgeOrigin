@@ -114,6 +114,7 @@ internal static class OriginHeartGoldWriteSafety
         int changedBox = -1;
         int changedSlot = -1;
         int changedCount = 0;
+        bool changedParty = false;
 
         for (int box = 0; box < OriginHeartGoldReadOnlySave.BoxCount; box++)
         {
@@ -125,40 +126,212 @@ internal static class OriginHeartGoldWriteSafety
 
                 changedBox = box;
                 changedSlot = slot;
+                changedParty = false;
                 changedCount++;
 
                 if (changedCount > 1)
-                    return "An Origin EditMon operation may change only one existing boxed Pokémon.";
+                    return "An Origin EditMon operation may change only one existing Pokémon.";
             }
         }
 
-        if (changedCount != 1)
-            return "The Origin EditMon operation did not change exactly one boxed Pokémon.";
+        if (before.PartyCount != after.PartyCount)
+            return "An Origin EditMon operation cannot change the Party count.";
 
-        var target = new SlotRef(changedBox, changedSlot);
+        for (int slot = 0; slot < before.PartyCount; slot++)
+        {
+            if (before.GetPartyRecord(slot).Span.SequenceEqual(
+                    after.GetPartyRecord(slot).Span))
+                continue;
+
+            changedBox = -1;
+            changedSlot = slot;
+            changedParty = true;
+            changedCount++;
+
+            if (changedCount > 1)
+                return "An Origin EditMon operation may change only one Pokémon.";
+        }
+
+        if (changedCount != 1)
+            return "The Origin EditMon operation did not change exactly one Pokémon.";
+
+        var target = new SlotRef(changedParty ? -1 : changedBox, changedSlot);
 
         if (scope is not null &&
             (scope.Slots.Count != 1 || !scope.Slots.Contains(target)))
             return "The changed Pokémon does not match the declared write scope.";
 
-        byte[] oldRecord = before.GetBoxRecord(changedBox, changedSlot).ToArray();
-        byte[] newRecord = after.GetBoxRecord(changedBox, changedSlot).ToArray();
+        if (changedParty)
+        {
+            ReadOnlySpan<byte> oldParty =
+                before.GetPartyRecord(changedSlot).Span;
 
-        if (!HasOnlySupportedPokemonChanges(oldRecord, newRecord, out var rejection))
-            return $"The Pokémon edit was refused: {rejection}";
+            ReadOnlySpan<byte> newParty =
+                after.GetPartyRecord(changedSlot).Span;
+
+            if (!oldParty[BoxedSize..].SequenceEqual(newParty[BoxedSize..]))
+                return "A Party edit cannot change the 100 cached-stat bytes.";
+
+            byte[] oldRecord =
+                before.GetPartyPokemonBytes(changedSlot).ToArray();
+
+            byte[] newRecord =
+                after.GetPartyPokemonBytes(changedSlot).ToArray();
+
+            if (!HasOnlySupportedPartyPPChanges(oldRecord, newRecord, out var rejection))
+                return $"The Party Pokémon edit was refused: {rejection}";
+
+            if (!OriginHeartGoldPartyMutation.TryCreateCandidate(
+                    original.Span,
+                    changedSlot,
+                    newRecord,
+                    out byte[] expected))
+                return "The Origin Party mutator rejected the Pokémon candidate.";
+
+            if (!expected.AsSpan().SequenceEqual(candidate.Span))
+                return "The Party candidate contains changes outside the validated mutation.";
+
+            return null;
+        }
+
+        byte[] oldBoxRecord = before.GetBoxRecord(changedBox, changedSlot).ToArray();
+        byte[] newBoxRecord = after.GetBoxRecord(changedBox, changedSlot).ToArray();
+
+        if (!HasOnlySupportedPokemonChanges(oldBoxRecord, newBoxRecord, out var boxRejection))
+            return $"The Pokémon edit was refused: {boxRejection}";
 
         if (!OriginHeartGoldBoxMutation.TryCreateCandidate(
                 original.Span,
                 changedBox,
                 changedSlot,
-                newRecord,
-                out byte[] expected))
+                newBoxRecord,
+                out byte[] expectedBox))
             return "The Origin box mutator rejected the Pokémon candidate.";
 
-        if (!expected.AsSpan().SequenceEqual(candidate.Span))
+        if (!expectedBox.AsSpan().SequenceEqual(candidate.Span))
             return "The Pokémon candidate contains changes outside the validated box mutation.";
 
         return null;
+    }
+
+    private static bool HasOnlySupportedPartyPPChanges(
+        byte[] originalRecord,
+        byte[] candidateRecord,
+        out string reason)
+    {
+        reason = "Unknown validation failure.";
+
+        if (originalRecord.Length != BoxedSize ||
+            candidateRecord.Length != BoxedSize)
+        {
+            reason = "Party Pokémon record size mismatch.";
+            return false;
+        }
+
+        var oldPokemon = new PK4(originalRecord.ToArray());
+        var newPokemon = new PK4(candidateRecord.ToArray());
+
+        if (!oldPokemon.Valid || !newPokemon.Valid)
+        {
+            reason = "Invalid Party Pokémon checksum.";
+            return false;
+        }
+
+        if (oldPokemon.Species == 0 ||
+            newPokemon.Species != oldPokemon.Species ||
+            newPokemon.PID != oldPokemon.PID)
+        {
+            reason = "Party Pokémon identity or species changed.";
+            return false;
+        }
+
+        byte[] oldData = oldPokemon.Data[..BoxedSize].ToArray();
+        byte[] newData = newPokemon.Data[..BoxedSize].ToArray();
+
+        for (int i = 0; i < BoxedSize; i++)
+        {
+            if (oldData[i] == newData[i])
+                continue;
+
+            bool allowed =
+                i is 0x06 or 0x07 ||
+                i is >= 0x30 and <= 0x37;
+
+            if (!allowed)
+            {
+                reason = $"Unsupported Party Pokémon byte changed at offset 0x{i:X2}.";
+                return false;
+            }
+        }
+
+        int changedMoveDetails = 0;
+
+        for (int i = 0; i < 4; i++)
+        {
+            ushort oldMove = BinaryPrimitives.ReadUInt16LittleEndian(
+                oldData.AsSpan(0x28 + i * 2, 2));
+
+            ushort newMove = BinaryPrimitives.ReadUInt16LittleEndian(
+                newData.AsSpan(0x28 + i * 2, 2));
+
+            if (oldMove != newMove)
+            {
+                reason = $"Party move slot {i + 1}: changing the move itself is not authorized.";
+                return false;
+            }
+
+            int newPP = newData[0x30 + i];
+            int oldPP = oldData[0x30 + i];
+            int newUps = newData[0x34 + i];
+            int oldUps = oldData[0x34 + i];
+
+            if (oldPP == newPP && oldUps == newUps)
+                continue;
+
+            changedMoveDetails++;
+
+            if (newMove == 0)
+            {
+                if (newPP != 0 || newUps != 0)
+                {
+                    reason = $"Empty move slot {i + 1} must have zero PP and PP Ups.";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (newUps > 3)
+            {
+                reason = $"Party move slot {i + 1}: PP Ups exceeds 3.";
+                return false;
+            }
+
+            if (!OriginHeartGoldMoveData.TryGet(newMove, out var moveData) ||
+                string.IsNullOrWhiteSpace(moveData.Name) ||
+                moveData.BasePp <= 0)
+            {
+                reason = $"Party move slot {i + 1}: invalid or missing move catalog entry.";
+                return false;
+            }
+
+            int maximumPP = moveData.BasePp + (moveData.BasePp * newUps / 5);
+
+            if (newPP > maximumPP)
+            {
+                reason = $"Party move slot {i + 1}: PP={newPP} exceeds maximum {maximumPP}.";
+                return false;
+            }
+        }
+
+        if (changedMoveDetails == 0)
+        {
+            reason = "No Party PP or PP Ups value was changed.";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
     }
 
     private static bool HasOnlySupportedPokemonChanges(
